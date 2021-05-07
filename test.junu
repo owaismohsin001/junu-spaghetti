@@ -1,0 +1,49 @@
+let x = 1
+let b: Bool = true
+
+x = 4
+let i = 0
+
+let z = x*3+i
+
+let y = b | !b
+
+let str = "Hello"
+
+let fl = (a: Int, b: Bool) => {
+    return (n: Bool) => {
+        return (h: String) => {
+            return h
+        }
+    }
+}
+
+let go = (a: Int, b: Int) => {
+    let f = (n: Int) => {
+        let zoo = n * 3
+        return n
+    }
+    let ans = a+b
+    return f(ans)
+}
+
+let ol = (a: Bool, b: Bool) => Bool {
+    return (a & b) | a
+}
+
+mutu1(Int, Int) => Int
+mutu2(Int, Bool) => Int
+
+mutu1 = (a: Int, b: Int) => Int {
+    return mutu2(b, true)
+}
+
+mutu2 = (n: Int, a: Bool) => Int {
+    return mutu1(n, n+1)
+}
+
+let apply = (f: (Int) -> Bool, a: Int) => Bool {
+    return f(a)
+}
+
+let given = fl(1, true)(true)("Hello")
