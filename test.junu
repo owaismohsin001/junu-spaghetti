@@ -1,4 +1,9 @@
+type Cat = {name: String}
+type Moo = {name: String, age: Int, male: Bool, cat: Cat}
+type Person = {name: String, age: Int, male: Bool, cat: Cat}
+
 let x = 1
+
 let b: Bool = true
 
 x = 4
@@ -12,8 +17,10 @@ let str = "Hello"
 
 let fl = (a: Int, b: Bool) => {
     return (n: Bool) => {
-        return (h: String) => {
-            return h
+        return (h: Cat) => {
+            return () => {
+                return h.name
+            }
         }
     }
 }
@@ -46,4 +53,31 @@ let apply = (f: (Int) -> Bool, a: Int) => Bool {
     return f(a)
 }
 
-let given = fl(1, true)(true)("Hello")
+let given = fl(1, true)(true)({name: "Hello's kitty"})()
+let application = apply((a: Int) => { return a == 1 }, 1)
+
+let changeCatName = (person: Person, name: String) => {
+    let f = () => {
+        if person.age < 5 {
+            let catties = 1
+            catties = catties + 1
+            person.cat.name = person.name
+            return person.cat.name
+        } else if person.age < 100 {
+            person.cat.name = name
+            return person.cat.name
+        } else {
+            return "Dead man's cat"
+        }
+    }
+    return f()
+}
+
+let modifyAge = (person: Person, age: Int) => {
+    person.age = if age < 0 then 0 else age
+    return age
+}
+
+let st = {name: "Ameer", age: 10, male: true, cat: {name: "Tom"}}
+changeCatName(st, "Molly")
+modifyAge(st, st.age + 1)

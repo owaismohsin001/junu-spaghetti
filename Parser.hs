@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module Parser where
 
 import Data.Void ( Void )
@@ -9,7 +10,7 @@ import Debug.Trace ( trace )
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Set as Set
 import Control.Monad
-import qualified Data.Map.Ordered as Map
+import qualified Data.Map as Map
 import Nodes
 
 type Parser = Parsec Void String
@@ -32,11 +33,13 @@ eofParser = "" <$ eof
 
 data Keyword =
     If
+    | Then
     | Else
     | True
     | False
     | Let
     | Return
+    | Type
     deriving(Show, Eq, Enum)
 
 notKeyword :: Parser ()
@@ -82,10 +85,20 @@ identifierPrefixParser f fs sn =
 lhsLittleId :: Parser Lhs
 lhsLittleId = identifierPrefixParser LhsIdentifer lower (lower <|> upper <|> digit)
 
+lhsBigId :: Parser Lhs
+lhsBigId = identifierPrefixParser LhsIdentifer upper (lower <|> upper <|> digit)
+
+
 littleId :: Parser Node
 littleId = identifierPrefixParser Identifier lower (lower <|> upper <|> digit)
 
-bigAnnotationId = identifierPrefixParser (\id _ -> Annotation id) upper (lower <|> upper <|> digit)
+bigAnnotationId = identifierPrefixParser (
+    \case
+        "Int" -> const $ AnnotationLiteral "Int"
+        "Bool" -> const $ AnnotationLiteral "Bool"
+        "String" -> const $ AnnotationLiteral "String"
+        a -> const $ Annotation a
+    ) upper (lower <|> upper <|> digit)
 
 lhsParser :: Parser Lhs
 lhsParser = choice $ map try [
@@ -94,6 +107,9 @@ lhsParser = choice $ map try [
 
 blockParser :: Parser a -> Parser [a]
 blockParser p = spaces *> Text.Megaparsec.Char.string "{" *> P.many (skipLines *> p <* skipLines) <* Text.Megaparsec.Char.string "}"
+
+programBlockParser :: Parser [Node]
+programBlockParser = concat <$> blockParser programStmntParser
 
 blockOrExprParser :: Parser [Node]
 blockOrExprParser = concat <$> (blockParser programStmntParser <|> ((\pos a -> [[Nodes.Return a pos]]) <$> getSourcePos <*> exprParser))
@@ -113,29 +129,43 @@ containerFunction strt end sep f p =
 tuple :: ([a] -> SourcePos -> b) -> Parser a -> Parser b
 tuple = Parser.containerFunction "(" ")" ","
 
-binOp mod f ops ret = do
-  t1 <- f
+binOpGeneralized mod f1 f2 ops ret = do
+  t1 <- f1
   loop t1
   where termSuffix t1 = try (do
           pos <- getSourcePos
           spaces
           op <- ops
           spaces
-          t2 <- f
+          t2 <- f2
           loop (ret t1 (mod op) t2 pos))
         loop t = termSuffix t <|> return t
+
+
+binOp mod f = binOpGeneralized mod f f
 
 unaryOp mod ops f ret = (\pos op exp -> ret (mod op) exp pos)
     <$> getSourcePos 
     <*> ops
     <*> (spaces *> f <* spaces)
 
+structParser f ret = containerFunction "{" "}" ","
+    (ret . Map.fromList)
+    ((,) <$> lhsLittleId <*> (spaces *> Text.Megaparsec.Char.string ":" *> spaces *> f))
+
+structAnnotationParser :: Parser Annotation
+structAnnotationParser = structParser annotationParser (\xs _ -> StructAnnotation xs) 
+
+structNodeParser :: Parser Node
+structNodeParser = structParser exprParser (\xs pos -> StructN $ Struct xs pos)
 
 binCall :: Node -> String -> Node -> SourcePos -> Node
 binCall a op b pos = Call (Identifier op pos) [a, b] pos
 
+unaryCall :: String -> Node -> SourcePos -> Node
 unaryCall op a pos = Call (Identifier op pos) [a] pos
 
+modOp :: String -> String
 modOp "==" = "eq"
 modOp "!=" = "neq"
 modOp ">=" = "gte"
@@ -149,6 +179,7 @@ modOp "-" = "sub"
 modOp "/" = "div"
 modOp "*" = "mul"
 
+modUnaryOp :: String -> String
 modUnaryOp "!" = "not"
 modUnaryOp "-" = "neg"
 
@@ -172,7 +203,17 @@ arithExprParser :: Parser Node
 arithExprParser = binOp modOp termParser (Text.Megaparsec.Char.string "+" <|> Text.Megaparsec.Char.string "-") binCall
 
 termParser :: Parser Node
-termParser = binOp modOp atomParser (Text.Megaparsec.Char.string "*" <|> Text.Megaparsec.Char.string "/") binCall
+termParser = binOp modOp accessParser (Text.Megaparsec.Char.string "*" <|> Text.Megaparsec.Char.string "/") binCall
+
+accessParser :: Parser Node
+accessParser = binOpGeneralized id atomParser lhsLittleId (Text.Megaparsec.Char.string ".") (\a _ b pos -> Access a b pos)
+
+inlineIfParser :: Parser Node
+inlineIfParser = (\pos c t e -> IfExpr c t e pos)
+    <$> getSourcePos
+    <*> (keyword If *> spaces *> exprParser <* spaces)
+    <*> (keyword Then *> spaces *> exprParser <* spaces)
+    <*> (keyword Else *> spaces *> exprParser <* spaces)
 
 atomParser :: Parser Node
 atomParser = do
@@ -183,9 +224,11 @@ atomParser = do
         foldToCalls exp pos xs = foldl (\a b -> Call a b pos) exp xs
         calls exp = (:) <$> tuple const exprParser <*> many (tuple const exprParser)
         possibles = choice $ map try [
+            inlineIfParser,
             numberParser,
             booleanParser,
             stringParser '\"',
+            structNodeParser,
             returnParser,
             unaryOp modUnaryOp (Text.Megaparsec.Char.string "-") atomParser unaryCall,
             unaryOp modUnaryOp (Text.Megaparsec.Char.string "!") compExprParser unaryCall,
@@ -197,6 +240,7 @@ atomParser = do
 annotationParser :: Parser Annotation
 annotationParser = 
     bigAnnotationId
+    <|> try structAnnotationParser
     <|> (FunctionAnnotation <$> tuple const annotationParser <*> (spaces *> Text.Megaparsec.Char.string "->" *> spaces *> annotationParser))
 
 declParser :: Parser Decl
@@ -240,22 +284,42 @@ funDeclParser = (\pos lhs argTypes ret -> FunctionDecl lhs (FunctionAnnotation a
     where
         ls = tuple const annotationParser
 
-
 assignmentParser :: Parser Decl
 assignmentParser = (\pos lhs expr -> Assign lhs expr pos)
     <$> getSourcePos 
     <*> lhsParser 
     <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> exprParser)
 
+typeDeclParser :: Parser Decl
+typeDeclParser = (\pos lhs def -> StructDef lhs def pos)
+    <$> getSourcePos
+    <*> (keyword Type *> spaces *> lhsBigId <* spaces)
+    <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> annotationParser)
+
+accessAssignParser :: Parser Decl
+accessAssignParser = (\(Access n p pos) rhs -> Assign (LhsAccess n p pos) rhs pos)
+    <$> (lookAhead (littleId *> spaces *> Text.Megaparsec.Char.string "." *> spaces) *> accessParser)
+    <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> exprParser)
+
+ifParser :: Parser Node
+ifParser = (\pos c t e -> IfStmnt c t e pos)
+    <$> getSourcePos
+    <*> (keyword If *> spaces *> exprParser <* spaces)
+    <*> (skipLines *> programBlockParser <* skipLines)
+    <*> ((keyword Else *> spaces *> (programBlockParser <|> ((:[]) <$> ifParser) <* spaces)) <|> return [])
+
 singleStmntParser :: Parser Node
 singleStmntParser = choice $ map try [
         DeclN <$> declParser,
+        DeclN <$> typeDeclParser,
+        DeclN <$> accessAssignParser,
         DeclN <$> assignmentParser
         ]
 
 programStmntParser :: Parser [Node]
 programStmntParser = choice $ map try [
     (:[]) <$> singleStmntParser,
+    (:[]) <$> ifParser,
     try (map DeclN <$> funDeclAssignParser),
     (: []) . DeclN <$> funDeclParser,
     (:[]) <$> exprParser
