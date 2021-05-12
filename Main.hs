@@ -10,6 +10,7 @@ import Control.Monad.State
 import Text.Megaparsec as P hiding (State)
 import Text.Megaparsec.Pos (mkPos)
 import Data.Functor
+import qualified Data.Set as Set
 import qualified Parser
 import Nodes
 
@@ -51,12 +52,12 @@ mapLeft s f = case s of
 toEither def (Just a) = Right a
 toEither def Nothing = Left def
 
-getTypeState :: Annotation -> P.SourcePos -> AnnotationState (Either String Annotation)
+getTypeState :: Annotation -> P.SourcePos -> State (Annotation, (b, UserDefinedTypes)) (Either String Annotation)
 getTypeState (Annotation id) pos = do
     (_, (_, types)) <- get
     case Map.lookup (LhsIdentifer id pos) types of
         Just st -> return $ Right st
-        Nothing -> return . Left $ "No type named " ++ id ++ " found"
+        Nothing -> return . Left $ "No type named " ++ id ++ " found\n" ++ showPos pos 
 getTypeState a _ = return $ Right a
 
 getTypeStateFrom :: AnnotationState (Either String Annotation) -> SourcePos -> AnnotationState (Either String Annotation)
@@ -81,11 +82,176 @@ firstInferrableReturn pos ans ((DeclN (Assign _ rhs _)):xs) =
 firstInferrableReturn pos ans ((Return a _):_) = Right a
 firstInferrableReturn pos ans (_:xs) = firstInferrableReturn pos ans xs
 
+-- getGenericsDeep :: Annotation -> [Annotation]
+-- getGenericsDeep a@(GenericAnnotation _ as) = a : concatMap getGenericsFromConstraints as
+-- getGenericsDeep (OpenFunctionAnnotation anns ret _) = foldr1 (++) (map getGenericsDeep $ ret:anns)
+-- getGenericsDeep _ = []
+
+-- getGenericsFromConstraints :: Constraint -> [Annotation]
+-- getGenericsFromConstraints (ConstraintHas _ con) = getGenericsFromConstraints con
+-- getGenericsFromConstraints (AnnotationConstraint ann) = getGenericsDeep ann
+
+-- applyConstraints :: [Annotation] -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String [Annotation]
+-- applyConstraints xs pos mp (ConstraintContainer (ConstraintHas lhs cn)) ann1 = 
+--     case ann1 of
+--         StructAnnotation mp -> 
+--             case lhs `Map.lookup` mp of
+--                 Just ann -> applyConstraints (ann:xs) pos mp (ConstraintContainer cn) ann
+--                 Nothing -> Left $ "No field named " ++ show lhs ++ " found in " ++ show ann1
+--         Annotation id ->
+--             case LhsIdentifer id pos `Map.lookup` mp of
+--                 Just ann -> applyConstraints xs pos mp (ConstraintContainer cn) ann
+--                 Nothing -> Left "No type found"
+--         a -> Left "Fuck off"
+-- applyConstraints xs pos mp (ConstraintContainer (AnnotationConstraint ann1)) ann2 = sameTypes pos mp ann1 ann2 *> Right (ann2:xs)
+-- applyConstraints xs pos mp a b = Right [b]
+
+-- specify :: SourcePos
+--     -> UserDefinedTypes
+--     -> Annotation
+--     -> Annotation
+--     -> Either String Annotation
+-- specify pos mp a b =
+--     sameTypes pos mp a b *> fun mp a b *> Right b
+--     where
+--         fun :: UserDefinedTypes -> Annotation -> Annotation -> Either String [Annotation]
+--         fun mp (OpenFunctionAnnotation oargs oret _) (FunctionAnnotation args ret) = concat <$> (sequence . Map.elems . Map.map (sames mp) $ createMap Map.empty (zip (oret:oargs) (ret:args)))
+
+--         sames :: UserDefinedTypes -> [Annotation] -> Either String [Annotation]
+--         sames mp [] = Right []
+--         sames mp [x] = Right [x]
+--         sames mp (x1:x2:xs) = case sameTypes pos mp x1 x2 of
+--             Right _ -> sames mp xs
+--             Left err -> Left err
+
+--         createMap :: Map.Map Annotation [Annotation] -> [(Annotation, Annotation)] -> Map.Map Annotation [Annotation]
+--         createMap map [] = map
+--         createMap map ((t1, t2):xs) = 
+--             case Map.lookup t1 map of
+--                 Nothing -> createMap (Map.insert t1 [t2] map) xs
+--                 Just ts -> createMap (Map.insert t1 (t2:ts) map) xs
+
+--         -- The problem is to substitute nested structures, this function doesn't halt
+--         generatePairings openArg arg = case applyConstraints [] pos mp openArg arg of
+--             Right a -> let z = zip (getGenericsDeep openArg) a in createMap Map.empty z
+--             Left err -> error err
+
+addTypeVariable :: P.SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
+addTypeVariable pos k v =  do
+    (a, (mp, usts)) <- get
+    case Map.lookup k mp of
+        Nothing -> addToMap a mp usts
+        Just a -> case sameTypes pos usts a v of
+            Left err -> if a == AnnotationLiteral "_" then addToMap a mp usts else return $ Left err
+            Right a -> addToMap a mp usts
+        where 
+            addToMap :: Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> SubstituteState (Either String Annotation)
+            addToMap a mp usts = do
+                put (a, (Map.insert k v mp, usts))
+                return $ Right v
+
+applyConstraintState :: SourcePos -> Annotation -> Constraint -> SubstituteState (Either String Annotation)
+applyConstraintState pos ann (ConstraintHas lhs cn) = 
+    do 
+        mp <- gets (snd . snd)
+        case ann of
+            StructAnnotation mp -> 
+                case lhs `Map.lookup` mp of
+                    Just ann -> applyConstraintState pos ann cn
+                    Nothing -> return . Left $ "No field named " ++ show lhs ++ " found in " ++ show ann ++ "\n" ++ showPos pos
+            Annotation id ->
+                case LhsIdentifer id pos `Map.lookup` mp of
+                    Just ann -> applyConstraintState pos ann cn
+                    Nothing -> return . Left $ "No type named " ++ id ++ " found\n" ++ showPos pos
+            a -> return . Left $ "Can't search for field " ++ show lhs ++ " in " ++ show a ++ "\n" ++ showPos pos
+applyConstraintState pos ann2 (AnnotationConstraint ann1) = do
+    a <- addTypeVariable pos ann1 ann2
+    case a of
+        Right _ -> specifyInternal pos ann1 ann2
+        Left err -> return $ Left err
+
+specifyInternal :: SourcePos
+    -> Annotation
+    -> Annotation
+    -> SubstituteState (Either String Annotation)
+specifyInternal pos a@AnnotationLiteral{} b@AnnotationLiteral{} = (\mp -> return $ sameTypes pos mp a b *> Right a) =<< gets (snd . snd)
+specifyInternal pos a@(GenericAnnotation id cns) b@(AnnotationLiteral ann) = do
+    mp <- getTypeMap
+    ann <- addTypeVariable pos a b
+    case cns of
+        [] -> 
+            case ann of
+                Right ann -> return $ Right ann
+                Left err -> return $ Left err
+        _ -> return $ Left "Fuck"
+specifyInternal pos a@(GenericAnnotation id cns) b@(Annotation ann) = do
+    anno <- getTypeState b pos
+    case anno of
+        Right ann -> specifyInternal pos a ann
+        Left err -> return $ Left err
+specifyInternal pos a@(OpenFunctionAnnotation oargs oret _ _) b@(FunctionAnnotation args ret) = do
+    (\case
+        Right _ -> return $ Right b
+        Left err -> return $ Left err
+        ) . sequence =<< zipWithM (specifyInternal pos) (oargs ++ [oret]) (args ++ [ret])
+specifyInternal pos a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation args ret) = do
+    (\case
+        Right _ -> return $ Right b
+        Left err -> return $ Left err
+        ) . sequence =<< zipWithM (specifyInternal pos) (oargs ++ [oret]) (args ++ [ret])
+specifyInternal pos a@(GenericAnnotation id cns) b = 
+    (\case
+        Right _ -> do
+            a <- addTypeVariable pos a b
+            case a of
+                Right _ -> return $ Right b
+                Left err -> return $ Left err
+        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos b) cns
+specifyInternal pos a b = return . Left $ "Couldn't specify " ++ show a ++ " to " ++ show b ++ "\n" ++ showPos pos
+
+specify :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
+specify pos base mp a b = evalState (specifyInternal pos a b) (a, (base, mp))
+
+getPartialSpecificationRules :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Map.Map Annotation Annotation
+getPartialSpecificationRules pos base mp a b = (fst . snd) (execState (specifyInternal pos a b) (a, (base, mp)))
+
+getSpecificationRules :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes  -> Annotation -> Annotation -> Either String (Map.Map Annotation Annotation)
+getSpecificationRules pos base mp a b = case fst st of
+    Right _ -> Right (fst $ snd $ snd st)
+    Left err -> Left err 
+    where st = runState (specifyInternal pos a b) (a, (base, mp))
+
 getAssumptionType :: Node -> AnnotationState (Result String Annotation)
 getAssumptionType (DeclN (Decl lhs n a _)) = case a of 
     Just a -> Right <$> insertAnnotation lhs a
     Nothing -> mapRight (getAssumptionType n) (fmap Right . insertAnnotation lhs)
 getAssumptionType (DeclN (FunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs ann
+getAssumptionType (DeclN (OpenFunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs ann
+getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns _ pos)) = do
+    a <- getAnnotationState lhs
+    mp <- getTypeMap
+    case a of
+        Left err -> return $ Left err
+        Right a@(OpenFunctionAnnotation anns ret' ft impls ) -> do
+            let b = makeFunAnnotation args ret
+            case specify pos Map.empty mp a b of
+                Left err -> return $ Left err
+                Right ann -> Right <$> insertAnnotation lhs (OpenFunctionAnnotation anns ret' ft $ ann:impls)
+        Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
+getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns _ pos)) = do
+    a <- getAnnotationState lhs
+    mp <- getTypeMap
+    case a of
+        Left err -> return $ Left err
+        Right fun@(OpenFunctionAnnotation anns ret' ft impls) -> do
+            let specificationRules = getPartialSpecificationRules pos Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
+            case Map.lookup ret' specificationRules of
+                Nothing -> return . Left $ "Could not infer the return type\n" ++ showPos pos
+                Just inferredRetType ->
+                    case specify pos Map.empty mp fun (makeFunAnnotation args inferredRetType) of
+                        Left err -> return $ Left err
+                        Right ann -> Right <$> insertAnnotation lhs (OpenFunctionAnnotation anns ret' ft $ ann:impls)
+        Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
 getAssumptionType (DeclN (Assign (LhsAccess access prop accPos) expr pos)) = 
     getTypeStateFrom (getAssumptionType (Access access prop accPos)) pos
 getAssumptionType (DeclN (Assign lhs n _)) = mapRight (getAssumptionType n) (fmap Right . insertAnnotation lhs)
@@ -111,7 +277,7 @@ getAssumptionType (FunctionDef args ret body pos) =
                 Left err -> return . Left $ err
 getAssumptionType (Call e args pos) = (\case
                     Right (FunctionAnnotation fargs ret) -> do
-                        mp <- gets (snd . snd)
+                        mp <- getTypeMap
                         anns <- sequence <$> mapM consistentTypes args
                         case anns of
                             Right anns -> return $ ret <$ zipWithM (sameTypes pos mp) fargs anns
@@ -175,67 +341,117 @@ showPos (P.SourcePos s ln cn) =
 noTypeFound expected pos = "No type named " ++ expected ++ " found\n" ++ showPos pos
 unmatchedType a b pos = "Can't match expected type " ++ show a ++ " with given type " ++ show b ++ "\n" ++ showPos pos
 
-sameTypes :: P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
-sameTypes pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
+sameTypesGeneric :: Map.Map String [Constraint] -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
+sameTypesGeneric _ pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
     if a == b then Right a else Left $ unmatchedType a b pos
-sameTypes pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
-    if length as == length bs then a <$ zipWithM (sameTypes pos mp) (as ++ [ret1]) (bs ++ [ret2])
+sameTypesGeneric gs pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
+    if length as == length bs then a <$ zipWithM (sameTypesGeneric gs pos mp) (as ++ [ret1]) (bs ++ [ret2])
     else Left $ unmatchedType a b pos
-sameTypes pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
+sameTypesGeneric gs pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
     | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then Right a else Left $ unmatchedType a b pos
+    | Map.size ps1 /= Map.size ps2 = Left $ unmatchedType a b pos
     | Map.foldr (&&) True (Map.mapWithKey (f ps1) ps2) = Right a
     | otherwise = Left $ unmatchedType a b pos
     where
         f ps2 k v1 = 
             case Map.lookup k ps2 of
                 Just v2
-                    -> case sameTypes pos mp v1 v2 of
+                    -> case sameTypesGeneric gs pos mp v1 v2 of
                         Right _ -> True
                         Left err -> False
                 Nothing -> False
-sameTypes pos mp (Annotation id1) (Annotation id2) = 
+sameTypesGeneric gs pos mp (Annotation id1) (Annotation id2) = 
     case Map.lookup (LhsIdentifer id1 pos) mp of
         Just a -> case Map.lookup (LhsIdentifer id2 pos) mp of
-            Just b -> sameTypes pos mp a b
+            Just b -> sameTypesGeneric gs pos mp a b
             Nothing -> Left $ noTypeFound id2 pos
         Nothing -> Left $ noTypeFound id1 pos
-sameTypes pos mp (Annotation id) b = 
+sameTypesGeneric gs pos mp (Annotation id) b = 
     case Map.lookup (LhsIdentifer id pos) mp of
-        Just a -> sameTypes pos mp a b
+        Just a -> sameTypesGeneric gs pos mp a b
         Nothing -> Left $ noTypeFound id pos
-sameTypes pos mp b (Annotation id) = 
+sameTypesGeneric gs pos mp b (Annotation id) = 
     case Map.lookup (LhsIdentifer id pos) mp of
-        Just a -> sameTypes pos mp a b
+        Just a -> sameTypesGeneric gs pos mp a b
         Nothing -> Left $ noTypeFound id pos
-sameTypes pos _ a b = Left $ unmatchedType a b pos
+sameTypesGeneric gs pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
+    | id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = Left $ "Expected " ++ show a ++ " but got " ++ show b
+    | otherwise = zipWithM (matchConstraint gs pos mp) cs1 cs2 *> Right a
+sameTypesGeneric gs pos mp a@(GenericAnnotation _ acs) b = 
+    mapM (matchConstraint gs pos mp (AnnotationConstraint b)) acs *> Right b
+sameTypesGeneric gs pos mp b a@(GenericAnnotation _ acs) = 
+    mapM (matchConstraint gs pos mp (AnnotationConstraint b)) acs *> Right a
+sameTypesGeneric gs pos mp ft@(OpenFunctionAnnotation anns1 ret1 _ _) (OpenFunctionAnnotation anns2 ret2 _ _) =
+    zipWithM (sameTypesGeneric gs' pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2]) *> Right ft where 
+        gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
+sameTypesGeneric gs pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
+    zipWithM (sameTypesGeneric gs' pos mp) (anns1 ++ [ret1]) (args ++ [ret2]) *> Right a where
+        gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
+sameTypesGeneric _ pos _ a b = Left $ unmatchedType a b pos
 
--- getReturns :: [Node] -> [[Node]]
--- getReturns [] = []
--- getReturns (DeclN (Decl _ rhs _ _):xs) = getReturns [rhs] ++ getReturns xs
--- getReturns (DeclN (Assign _ rhs _):xs) = getReturns [rhs] ++ getReturns xs
--- getReturns ((FunctionDef args ret body _):xs) = getReturns body ++ getReturns xs
--- getReturns (rt@(Return x pos):xs) = [rt] : getReturns xs
--- getReturns ((Call e as pos):xs) = join $ getReturns [e] : map (getReturns . (:[])) as
--- getReturns (Lit{}:xs) = getReturns xs
--- getReturns (Identifier{}:xs) = getReturns xs
+genericsFromList :: [Annotation] -> Map.Map String [Constraint]
+genericsFromList anns = foldr1 Map.union (map getGenerics anns)
 
+matchConstraint :: Map.Map String [Constraint] -> SourcePos -> UserDefinedTypes -> Constraint -> Constraint -> Either String Constraint
+matchConstraint gs pos mp c@(AnnotationConstraint a) (AnnotationConstraint b) = c <$ sameTypesGeneric gs pos mp a b
+matchConstraint gs pos mp a@(ConstraintHas lhs cns) b@(AnnotationConstraint ann) = 
+    case ann of
+        StructAnnotation ds -> 
+            if lhs `Map.member` ds then Right b
+            else Left $ "Can't match " ++ show a ++ " with " ++ show b
+        _ -> Left $ "Can't match " ++ show a ++ " with " ++ show b
+matchConstraint gs pos mp c@(ConstraintHas a c1) (ConstraintHas b c2) = 
+    if a /= b then Left $ "Can't match constraint " ++ show a ++ " with constraint " ++ show b ++ "\n" ++ showPos pos
+    else c <$ matchConstraint gs pos mp c1 c2
+matchConstraint gs pos mp a@(AnnotationConstraint ann) b@(ConstraintHas lhs cns) = matchConstraint gs pos mp b a
 
+getGenerics :: Annotation -> Map.Map String [Constraint]
+getGenerics (GenericAnnotation id cons) = Map.singleton id cons
+getGenerics (OpenFunctionAnnotation anns ret _ _) = foldr1 Map.union (map getGenerics $ ret:anns)
+getGenerics _ = Map.empty
+
+sameTypes :: SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
+sameTypes = sameTypesGeneric Map.empty
+
+getTypeMap :: State (a, (b, UserDefinedTypes)) (Map.Map Lhs Annotation)
+getTypeMap = gets (snd . snd)
 
 consistentTypes ::  Node -> AnnotationState (Either String Annotation)
 consistentTypes (DeclN (Decl lhs rhs _ pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
-    <$> getAnnotationState lhs <*> consistentTypes rhs <*> gets (snd . snd)
+    <$> getAnnotationState lhs <*> consistentTypes rhs <*> getTypeMap
 consistentTypes (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
-    <$> getAssumptionType (Access access prop accPos) <*> consistentTypes rhs <*> gets (snd . snd)
+    <$> getAssumptionType (Access access prop accPos) <*> consistentTypes rhs <*> getTypeMap
 consistentTypes (DeclN (Assign lhs rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b) 
-    <$> getAnnotationState lhs <*> consistentTypes rhs <*> gets (snd . snd)
+    <$> getAnnotationState lhs <*> consistentTypes rhs <*> getTypeMap
 consistentTypes (DeclN (FunctionDecl lhs ann pos)) = do
-    m <- gets (snd . snd)
+    m <- getTypeMap
+    l <- getAnnotationState lhs
+    case l of
+        Right l -> return $ sameTypes pos m ann l 
+        Left err -> return $ Left err
+consistentTypes (DeclN (ImplOpenFunction lhs args (Just ret) exprs _ pos)) = consistentTypes $ FunctionDef args (Just ret) exprs pos
+consistentTypes (DeclN (ImplOpenFunction lhs args Nothing exprs _ pos)) = do
+    a <- getAnnotationState lhs
+    mp <- getTypeMap
+    case a of
+        Left err -> return $ Left err
+        Right fun@(OpenFunctionAnnotation anns ret' _ impls) -> do
+            let specificationRules = getPartialSpecificationRules pos Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
+            case Map.lookup ret' specificationRules of
+                Nothing -> return . Left $ "Could not infer the return type\n" ++ showPos pos
+                Just inferredRetType ->
+                    case specify pos Map.empty mp fun (makeFunAnnotation args inferredRetType) of
+                        Left err -> return $ Left err
+                        Right ann -> consistentTypes $ FunctionDef args (Just inferredRetType) exprs pos
+        Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
+consistentTypes (DeclN (OpenFunctionDecl lhs ann pos)) =  do
+    m <- getTypeMap
     l <- getAnnotationState lhs
     case l of
         Right l -> return $ sameTypes pos m ann l 
         Left err -> return $ Left err
 consistentTypes (IfExpr cond t e pos) = do
-    m <- gets (snd . snd)
+    m <- getTypeMap
     c <- consistentTypes cond
     case c >>= \x -> sameTypes pos m x (AnnotationLiteral "Bool") of
         Right _ -> (\a b -> join $ sameTypes pos m <$> a <*> b) <$> consistentTypes t <*> consistentTypes e
@@ -274,7 +490,7 @@ consistentTypes (FunctionDef args ret body pos) =
     case ret of
         Just ret -> do
             whole_old@(a, (ans, mp)) <- get
-            map <- gets (snd . snd)
+            map <- getTypeMap
             let program = Program body
             let ans' = (assumeProgramMapping program (Annotations (Map.fromList $ args ++ [(LhsIdentifer "return" pos, ret)]) (Just ans)) mp, mp)
             let (rest, res) = runState (mapM consistentTypes body) (AnnotationLiteral "_", ans')
@@ -300,11 +516,11 @@ consistentTypes (FunctionDef args ret body pos) =
                         Left err -> return . Left $ err
                 Left err -> return $ Left err
 consistentTypes (Return n pos) =  getAnnotationState (LhsIdentifer "return" pos) >>= \case
-    Right a -> (\b mp -> sameTypes pos mp a =<< b) <$> consistentTypes n <*> gets (snd . snd)
+    Right a -> (\b mp -> sameTypes pos mp a =<< b) <$> consistentTypes n <*> getTypeMap
     Left _ -> mapRight (consistentTypes n) (fmap Right . insertAnnotation (LhsIdentifer "return" pos))
 consistentTypes (Call e args pos) =  (\case 
                     Right (FunctionAnnotation fargs ret) -> do
-                        mp <- gets (snd . snd)
+                        mp <- getTypeMap
                         anns <- sequence <$> mapM consistentTypes args
                         case anns of
                             Right anns -> return $ ret <$ zipWithM (sameTypes pos mp) fargs anns
@@ -315,6 +531,7 @@ consistentTypes (Identifier x pos) = getAnnotationState (LhsIdentifer x pos)
 consistentTypes (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Int"
 consistentTypes (Lit (LitBool _ _)) = return . Right $ AnnotationLiteral "Bool"
 consistentTypes (Lit (LitString _ _)) = return . Right $ AnnotationLiteral "String"
+consistentTypes a = error $ show a
 
 onlyTypeDecls :: Node -> Bool
 onlyTypeDecls (DeclN StructDef{}) = True

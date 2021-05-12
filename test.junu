@@ -1,6 +1,7 @@
-type Cat = {name: String}
-type Moo = {name: String, age: Int, male: Bool, cat: Cat}
-type Person = {name: String, age: Int, male: Bool, cat: Cat}
+type Pet = {species: String, name: String, color: String}
+type Moo = {name: String, age: Int, male: Bool, pet: Pet}
+type Person = {name: String, age: Int, male: Bool, pet: Pet}
+type Date = {month: Int, weekday: Int, year: Int}
 
 let x = 1
 
@@ -17,7 +18,7 @@ let str = "Hello"
 
 let fl = (a: Int, b: Bool) => {
     return (n: Bool) => {
-        return (h: Cat) => {
+        return (h: Pet) => {
             return () => {
                 return h.name
             }
@@ -53,7 +54,7 @@ let apply = (f: (Int) -> Bool, a: Int) => Bool {
     return f(a)
 }
 
-let given = fl(1, true)(true)({name: "Hello's kitty"})()
+let given = fl(1, true)(true)({name: "Hello's kitty", color: "Black", species: "Cat"})()
 let application = apply((a: Int) => { return a == 1 }, 1)
 
 let changeCatName = (person: Person, name: String) => {
@@ -61,11 +62,11 @@ let changeCatName = (person: Person, name: String) => {
         if person.age < 5 {
             let catties = 1
             catties = catties + 1
-            person.cat.name = person.name
-            return person.cat.name
+            person.pet.name = person.name
+            return person.pet.name
         } else if person.age < 100 {
-            person.cat.name = name
-            return person.cat.name
+            person.pet.name = name
+            return person.pet.name
         } else {
             return "Dead man's cat"
         }
@@ -78,6 +79,18 @@ let modifyAge = (person: Person, age: Int) => {
     return age
 }
 
-let st = {name: "Ameer", age: 10, male: true, cat: {name: "Tom"}}
+let st = {name: "Ameer", age: 10, male: true, pet: {species: "Cat", name: "Tom", color: "White"}}
 changeCatName(st, "Molly")
 modifyAge(st, st.age + 1)
+
+open setName(a{.pet: b{.name: String}}, String) => b{.name: String} for a{.pet: b{.name: String}}
+
+impl setName(person: Person, s: String) => {
+    person.name = s
+    return person.pet
+} for Person
+
+impl setName(cat: {pet: Person}, s: String) => {
+    cat.pet.name = s
+    return cat.pet
+} for {pet: Person}

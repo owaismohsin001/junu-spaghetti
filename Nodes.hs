@@ -6,19 +6,55 @@ import Text.Megaparsec as P hiding (State)
 
 data BinOp = BinOpNode Node String Node Pos
 
+data Constraint = 
+    AnnotationConstraint Annotation
+    | ConstraintHas Lhs Constraint
+    deriving(Eq, Ord)
+
+instance Show Constraint where
+    show (AnnotationConstraint ann) = show ann
+    show (ConstraintHas lhs constr) = "." ++ show lhs ++ ": " ++ show constr
+
 data Annotation = 
     Annotation String
     | AnnotationLiteral String
+    | GenericAnnotation String [Constraint]
     | FunctionAnnotation [Annotation] Annotation 
     | StructAnnotation (Map.Map Lhs Annotation)
+    | OpenFunctionAnnotation [Annotation] Annotation Annotation [Annotation]
+    | ConstraintContainer Constraint
+
+data AnnotationNoImpl = 
+    AnnotationNoImpl String
+    | AnnotationLiteralNoImpl String
+    | GenericAnnotationNoImpl String [Constraint]
+    | FunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl 
+    | StructAnnotationNoImpl (Map.Map Lhs AnnotationNoImpl)
+    | OpenFunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl AnnotationNoImpl
+    | ConstraintContainerNoPos Constraint
     deriving (Eq, Ord)
+
+toAnnotationNoImpl :: Annotation -> AnnotationNoImpl
+toAnnotationNoImpl (Annotation a) = AnnotationNoImpl a
+toAnnotationNoImpl (AnnotationLiteral a) = AnnotationLiteralNoImpl a
+toAnnotationNoImpl (GenericAnnotation a b) = GenericAnnotationNoImpl a b
+toAnnotationNoImpl (FunctionAnnotation a b) = FunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b)
+toAnnotationNoImpl (StructAnnotation map) = StructAnnotationNoImpl (Map.map toAnnotationNoImpl map)
+toAnnotationNoImpl (OpenFunctionAnnotation a b c _) = OpenFunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b) (toAnnotationNoImpl c)
+toAnnotationNoImpl (ConstraintContainer a) = ConstraintContainerNoPos a
+
+instance Eq Annotation where a == b = toAnnotationNoImpl a == toAnnotationNoImpl b
+instance Ord Annotation where a `compare` b = toAnnotationNoImpl a `compare` toAnnotationNoImpl b
 
 instance Show Annotation where
     show (Annotation id) = id
     show (AnnotationLiteral id) = id
     show (FunctionAnnotation anns an) = "(" ++ intercalate ", " (map show anns) ++ ") -> " ++ show an
+    show (GenericAnnotation id consts) = id ++ "{" ++ intercalate "< " (map show consts) ++ "}"
     show (StructAnnotation anns) = 
         "{" ++ intercalate ", " (Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) anns) ++ "}"
+    show (OpenFunctionAnnotation anns ret for impls) = "(" ++ intercalate ", " (map show anns) ++ ") -> " ++ show ret ++ 
+        " in {" ++ intercalate ", " (map show impls) ++ "} for " ++ show for
 
 data LhsNoPos = 
     LhsIdentiferNoPos String 
@@ -70,6 +106,8 @@ data Decl =
     | Assign Lhs Node P.SourcePos
     | FunctionDecl Lhs Annotation P.SourcePos
     | StructDef Lhs Annotation P.SourcePos
+    | OpenFunctionDecl Lhs Annotation P.SourcePos
+    | ImplOpenFunction Lhs [(Lhs, Annotation)] (Maybe Annotation) [Node] Annotation P.SourcePos
     | Expr Node
     deriving(Show)
 
@@ -78,6 +116,8 @@ data DeclNoPos =
     | AssignNoPos Lhs Node
     | FunctionDeclNoPos Lhs
     | StructDefNoPos Lhs Annotation
+    | OpenFunctionDeclNoPos Lhs Annotation
+    | ImplOpenFunctionNoPos Lhs [(Lhs, Annotation)] (Maybe Annotation) [Node] Annotation
     | ExprNoPos Node
     deriving(Show, Eq, Ord)
 
@@ -86,6 +126,8 @@ toDeclNoPos (Decl a b _ _) = DeclNoPos a b
 toDeclNoPos (Assign a b _) = AssignNoPos a b
 toDeclNoPos (StructDef a b _) = StructDefNoPos a b
 toDeclNoPos (FunctionDecl a _ _) = FunctionDeclNoPos a
+toDeclNoPos (OpenFunctionDecl a b _) = OpenFunctionDeclNoPos a b
+toDeclNoPos (ImplOpenFunction a b c d e _) = ImplOpenFunctionNoPos a b c d e
 toDeclNoPos (Expr e) = ExprNoPos e
 
 instance Eq Decl where
@@ -156,5 +198,7 @@ data Annotations = Annotations (Map.Map Lhs Annotation) (Maybe Annotations) deri
 type UserDefinedTypes = Map.Map Lhs Annotation
 
 type AnnotationState = State (Annotation, (Annotations, UserDefinedTypes))
+
+type SubstituteState = State (Annotation, (Map.Map Annotation Annotation, UserDefinedTypes))
 
 type Result = Either

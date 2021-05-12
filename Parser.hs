@@ -40,6 +40,9 @@ data Keyword =
     | Let
     | Return
     | Type
+    | Open
+    | Impl
+    | For
     deriving(Show, Eq, Enum)
 
 notKeyword :: Parser ()
@@ -237,9 +240,14 @@ atomParser = do
             Text.Megaparsec.Char.string "(" *> exprParser <* Text.Megaparsec.Char.string ")"
             ]
 
+constraintParser = 
+    (AnnotationConstraint <$> annotationParser)
+    <|> (ConstraintHas <$> (Text.Megaparsec.Char.string "." *> lhsLittleId) <*> (spaces *> Text.Megaparsec.Char.string ":" *> spaces *> constraintParser))
+
 annotationParser :: Parser Annotation
 annotationParser = 
-    bigAnnotationId
+    try bigAnnotationId
+    <|> try ((\(Identifier id _) cs -> GenericAnnotation id cs) <$> littleId <*> containerFunction "{" "}" "," const constraintParser)
     <|> try structAnnotationParser
     <|> (FunctionAnnotation <$> tuple const annotationParser <*> (spaces *> Text.Megaparsec.Char.string "->" *> spaces *> annotationParser))
 
@@ -276,11 +284,22 @@ funExprParser = (\pos args ret expr -> FunctionDef args ret expr pos)
     where
         ls = tuple const ((,) <$> lhsLittleId <*> (spaces *> Text.Megaparsec.Char.string ":" *> spaces *> annotationParser))
 
+funDeclParser :: Parser Decl
 funDeclParser = (\pos lhs argTypes ret -> FunctionDecl lhs (FunctionAnnotation argTypes ret) pos)
     <$> getSourcePos
     <*> lhsLittleId
     <*> ls
     <*> (spaces *> Text.Megaparsec.Char.string "=>" *> spaces *> annotationParser)
+    where
+        ls = tuple const annotationParser
+
+openFunDeclParser :: Parser Decl
+openFunDeclParser = (\pos lhs argTypes ret forType -> OpenFunctionDecl lhs (OpenFunctionAnnotation argTypes ret forType []) pos)
+    <$> getSourcePos
+    <*> (keyword Open *> spaces *> lhsLittleId <* spaces)
+    <*> ls
+    <*> (spaces *> Text.Megaparsec.Char.string "=>" *> spaces *> annotationParser)
+    <*> (spaces *> keyword For *> spaces *> annotationParser)
     where
         ls = tuple const annotationParser
 
@@ -308,8 +327,21 @@ ifParser = (\pos c t e -> IfStmnt c t e pos)
     <*> (skipLines *> programBlockParser <* skipLines)
     <*> ((keyword Else *> spaces *> (programBlockParser <|> ((:[]) <$> ifParser) <* spaces)) <|> return [])
 
+implOpenFunDeclParser :: Parser Decl
+implOpenFunDeclParser = (\pos lhs args ret exprs ft -> ImplOpenFunction lhs args ret exprs ft pos)
+    <$> getSourcePos
+    <*> (keyword Impl *> spaces *> lhsLittleId)
+    <*> ls
+    <*> (spaces *> Text.Megaparsec.Char.string "=>" *> spaces *> (try (Just <$> annotationParser) <|> return Nothing))
+    <*> blockOrExprParser
+    <*> (spaces *> keyword For *> spaces *> annotationParser)
+    where
+        ls = tuple const ((,) <$> lhsLittleId <*> (spaces *> Text.Megaparsec.Char.string ":" *> spaces *> annotationParser))
+
 singleStmntParser :: Parser Node
 singleStmntParser = choice $ map try [
+        DeclN <$> openFunDeclParser,
+        DeclN <$> implOpenFunDeclParser,
         DeclN <$> declParser,
         DeclN <$> typeDeclParser,
         DeclN <$> accessAssignParser,
