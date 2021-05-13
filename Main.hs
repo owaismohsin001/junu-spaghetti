@@ -82,14 +82,30 @@ firstInferrableReturn pos ans ((DeclN (Assign _ rhs _)):xs) =
 firstInferrableReturn pos ans ((Return a _):_) = Right a
 firstInferrableReturn pos ans (_:xs) = firstInferrableReturn pos ans xs
 
+isGeneric :: P.SourcePos -> UserDefinedTypes -> Annotation -> Bool
+isGeneric pos mp GenericAnnotation{} = True
+isGeneric pos mp AnnotationLiteral{} = False
+isGeneric pos mp (Annotation ann) = maybe False (isGeneric pos mp) (Map.lookup (LhsIdentifer ann pos) mp)
+isGeneric pos mp (FunctionAnnotation args ret) = all (isGeneric pos mp) (ret:args)
+isGeneric pos mp (StructAnnotation ms) = all (isGeneric pos mp) ms
+isGeneric pos mp OpenFunctionAnnotation{} = False
+
+substituteVariables :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Either String Annotation
+substituteVariables pos mp usts id@GenericAnnotation{} = maybe (Left "") Right (Map.lookup id mp)
+substituteVariables pos mp usts id@AnnotationLiteral{} = Right id
+substituteVariables pos mp usts (Annotation id) = maybe (Left "") Right (Map.lookup (LhsIdentifer id pos) usts)
+substituteVariables pos mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariables pos mp usts) args <*> substituteVariables pos mp usts ret
+substituteVariables pos mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariables pos mp usts) ms
+substituteVariables pos mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
+
 addTypeVariable :: P.SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
 addTypeVariable pos k v =  do
     (a, (mp, usts)) <- get
     case Map.lookup k mp of
         Nothing -> addToMap a mp usts
-        Just a -> (\case
+        Just a -> case sameTypes pos usts a v of
             Left err -> if a == AnnotationLiteral "_" then addToMap a mp usts else return $ Left err
-            Right a -> addToMap a mp usts) =<< specifyInternal pos a v
+            Right a -> addToMap a mp usts
         where 
             addToMap :: Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> SubstituteState (Either String Annotation)
             addToMap a mp usts = do
@@ -167,6 +183,8 @@ getSpecificationRules pos base mp a b = case fst st of
     Left err -> Left err 
     where st = runState (specifyInternal pos a b) (a, (base, mp))
 
+
+
 sameTypesBool pos mp a b = case sameTypes pos mp a b of
                         Right _ -> True
                         Left _ -> False
@@ -212,9 +230,9 @@ getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
             case getSpecificationRules pos Map.empty mp ft implft of
                 Right base -> do
                     let specificationRules = getPartialSpecificationRules pos Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
-                    case Map.lookup ret' specificationRules of
-                        Nothing -> return . Left $ "Could not infer the return type\n" ++ showPos pos
-                        Just inferredRetType ->
+                    case substituteVariables pos specificationRules mp ret' of
+                        Left a -> return . Left $ "Could not infer the return type: " ++ a ++ "\n" ++ showPos pos
+                        Right inferredRetType ->
                             let spfun = makeFunAnnotation args inferredRetType in
                             case getSpecificationRules pos base mp fun spfun of
                                 Left err -> return $ Left err
@@ -271,12 +289,14 @@ getAssumptionType (Call e args pos) = (\case
                                             case getSpecificationRules pos Map.empty mp opf $ FunctionAnnotation anns ret' of
                                                 Right base -> case Map.lookup ft base of
                                                     Just a -> maybe 
-                                                        (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a) 
+                                                        (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
                                                         (const $ return $ Right ret')
                                                         (find (sameTypesBool pos mp a) impls)
                                                     Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
                                                 Left err -> return $ Left err
-                                        Nothing -> error $ "This shoud not happen;;;\n" ++ showPos pos
+                                        Nothing -> case substituteVariables pos spec mp oret of
+                                            Right ret -> return $ Right ret
+                                            Left err -> if isGeneric pos mp oret then return . Left $ "Can't call " ++ show opf ++ " with arguments " ++ show anns ++ "\n" ++ showPos pos else return $ Right oret
                                 Left err -> return $ Left err
                     Right ann -> return . Left $ "Can't call a value of type " ++ show ann ++ "\n" ++ showPos pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (getAssumptionType e) pos
@@ -316,14 +336,14 @@ baseMapping = Map.fromList [
     (LhsIdentifer "sub" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mul" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "div" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "gt" sourcePos, FunctionAnnotation [AnnotationLiteral "Int", AnnotationLiteral "Int"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "gte" sourcePos, FunctionAnnotation [AnnotationLiteral "Int", AnnotationLiteral "Int"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "lt" sourcePos, FunctionAnnotation [AnnotationLiteral "Int", AnnotationLiteral "Int"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "lte" sourcePos, FunctionAnnotation [AnnotationLiteral "Int", AnnotationLiteral "Int"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "eq" sourcePos, FunctionAnnotation [AnnotationLiteral "Int", AnnotationLiteral "Int"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "neq" sourcePos, FunctionAnnotation [AnnotationLiteral "Int", AnnotationLiteral "Int"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "and" sourcePos, FunctionAnnotation [AnnotationLiteral "Bool", AnnotationLiteral "Bool"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "or" sourcePos, FunctionAnnotation [AnnotationLiteral "Bool", AnnotationLiteral "Bool"] (AnnotationLiteral "Bool")),
+    (LhsIdentifer "gt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
+    (LhsIdentifer "gte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
+    (LhsIdentifer "lt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
+    (LhsIdentifer "lte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
+    (LhsIdentifer "eq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
+    (LhsIdentifer "neq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
+    (LhsIdentifer "and" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Bool"]),
+    (LhsIdentifer "or" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Bool"]),
     (LhsIdentifer "not" sourcePos, FunctionAnnotation [AnnotationLiteral "Bool"] (AnnotationLiteral "Bool")),
     (LhsIdentifer "neg" sourcePos, FunctionAnnotation [AnnotationLiteral "Int"] (AnnotationLiteral "Int"))
     ]
@@ -375,7 +395,7 @@ sameTypesGeneric gs pos mp b (Annotation id) =
         Nothing -> Left $ noTypeFound id pos
 sameTypesGeneric tgs@(sensitive, gs) pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
     | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = Left $ "Expected " ++ show a ++ " but got " ++ show b
-    | otherwise = zipWithM (matchConstraint tgs pos mp) cs1 cs2 *> Right a
+    | otherwise = if id1 == id2 then zipWithM (matchConstraint tgs pos mp) cs1 cs2 *> Right a else Left $ unmatchedType a b pos
 sameTypesGeneric tgs@(sensitive, gs) pos mp a@(GenericAnnotation _ acs) b = 
     if sensitive then 
         mapM (matchConstraint tgs pos mp (AnnotationConstraint b)) acs *> Right b
@@ -440,9 +460,9 @@ consistentTypes (DeclN (ImplOpenFunction lhs args Nothing exprs implft pos)) = d
         Left err -> return $ Left err
         Right fun@(OpenFunctionAnnotation anns ret' ft impls) -> do
             let specificationRules = getPartialSpecificationRules pos Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
-            case Map.lookup ret' specificationRules of
-                Nothing -> return . Left $ "Could not infer the return type\n" ++ showPos pos
-                Just inferredRetType ->
+            case substituteVariables pos specificationRules mp ret' of
+                Left err -> return . Left $ "Could not infer the return type: " ++ err ++ "\n" ++ showPos pos
+                Right inferredRetType ->
                     case specify pos Map.empty mp fun (makeFunAnnotation args inferredRetType) of
                         Left err -> return $ Left err
                         Right ann -> consistentTypes $ FunctionDef args (Just inferredRetType) exprs pos
@@ -497,6 +517,7 @@ consistentTypes (FunctionDef args ret body pos) =
             let program = Program body
             let ans' = (assumeProgramMapping program (Annotations (Map.fromList $ args ++ [(LhsIdentifer "return" pos, ret)]) (Just ans)) mp, mp)
             let (rest, res) = runState (mapM consistentTypes body) (AnnotationLiteral "_", ans')
+            put whole_old
             case getAnnotation (LhsIdentifer "return" pos) (fst $ snd res) of
                 Right ret' -> case sequence rest of
                     Right _ -> return $ sameTypes pos map (makeFunAnnotation args ret) (makeFunAnnotation args ret')
@@ -505,7 +526,7 @@ consistentTypes (FunctionDef args ret body pos) =
         Nothing -> do
             whole_old_ans@(a, (old_ans, mp)) <- get
             let program = Program body
-            let ans = (a, (assumeProgramMapping program (Annotations (Map.fromList args) (Just old_ans)) mp, mp))
+            let ans = (a, (assumeProgramMapping program (Annotations (Map.fromList $ (LhsIdentifer "return" pos, AnnotationLiteral "_"):args) (Just old_ans)) mp, mp))
             put ans
             xs <- sequence <$> mapM consistentTypes body
             new_ans <- gets $ fst . snd
@@ -519,8 +540,9 @@ consistentTypes (FunctionDef args ret body pos) =
                         Left err -> return . Left $ err
                 Left err -> return $ Left err
 consistentTypes (Return n pos) =  getAnnotationState (LhsIdentifer "return" pos) >>= \case
-    Right a -> (\b mp -> sameTypes pos mp a =<< b) <$> consistentTypes n <*> getTypeMap
     Left _ -> mapRight (consistentTypes n) (fmap Right . insertAnnotation (LhsIdentifer "return" pos))
+    Right (AnnotationLiteral "_") -> mapRight (consistentTypes n) (fmap Right . insertAnnotation (LhsIdentifer "return" pos))
+    Right a -> (\b mp -> sameTypes pos mp a =<< b) <$> consistentTypes n <*> getTypeMap
 consistentTypes (Call e args pos) =  (\case 
                     Right (FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
@@ -541,12 +563,14 @@ consistentTypes (Call e args pos) =  (\case
                                             case getSpecificationRules pos Map.empty mp opf $ FunctionAnnotation anns ret' of
                                                 Right base -> case Map.lookup ft base of
                                                     Just a -> maybe 
-                                                        (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a) 
+                                                        (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
                                                         (const $ return $ Right ret')
                                                         (find (sameTypesBool pos mp a) impls)
                                                     Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
                                                 Left err -> return $ Left err
-                                        Nothing -> error $ "This shoud not happen;;;\n" ++ showPos pos
+                                        Nothing -> case substituteVariables pos spec mp oret of
+                                            Right ret -> return $ Right ret
+                                            Left err -> if isGeneric pos mp oret then return . Left $ "Can't call " ++ show opf ++ " with arguments " ++ show anns ++ "\n" ++ showPos pos else return $ Right oret
                                 Left err -> return $ Left err
                     Right ann -> return . Left $ "Can't call a value of type " ++ show ann ++ "\n" ++ showPos pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (consistentTypes e) pos

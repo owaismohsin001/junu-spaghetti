@@ -83,16 +83,29 @@ let st = {name: "Ameer", age: 10, male: true, pet: {species: "Cat", name: "Tom",
 changeCatName(st, "Molly")
 modifyAge(st, st.age + 1)
 
-open setName(String, a{.pet: b{.name: String}}) => b{.name: String} for a{.pet: b{.name: String}}
+open setName(t{}, String, a{.pet: b{.name: t{}}}) => b{.name: t{}} for a{.pet: b{.name: t{}}}
 
-impl setName(s: String, person: Person) => {
+impl setName(s: String, area: String, person: Person) => {
     person.name = s
     return person.pet
 } for Person
 
-impl setName(s: String, cat: {pet: Person}) => {
+impl setName(s: String, area: String, cat: {pet: Person}) => {
     cat.pet.name = s
     return cat.pet
 } for {pet: Person}
 
-setName("Ameer", {pet: st})
+impl setName(i: Int, area: String, intkeeper: {pet: {name: Int}}) => {
+    intkeeper.pet.name = i
+    return intkeeper.pet
+} for {pet: {name: Int}}
+
+setName("Ameer", "Collatz", {pet: st})
+
+open fi(a{}) => (a{}) -> a{} for a{}
+
+impl fi(i: Int) => {
+    return (i: Int) => {return i}
+} for Int
+
+fi(1)
