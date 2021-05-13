@@ -100,7 +100,7 @@ impl setName(i: Int, area: String, intkeeper: {pet: {name: Int}}) => {
     return intkeeper.pet
 } for {pet: {name: Int}}
 
-setName("Ameer", "Collatz", {pet: st})
+let sn = setName("Ameer", "Collatz", {pet: st})
 
 open fi(a{}) => (a{}) -> a{} for a{}
 
@@ -109,3 +109,12 @@ impl fi(i: Int) => {
 } for Int
 
 fi(1)
+
+
+let fn = (c: {n: t{}}, a: t{}) => t{} {
+    c.n = a
+    return a
+}
+
+fn({n: {month: 2, weekday: 5, year: 1999}}, {month: 3, weekday: 5, year: 1999})
+fn({n: false}, true)

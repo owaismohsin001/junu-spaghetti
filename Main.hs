@@ -91,9 +91,9 @@ isGeneric pos mp (StructAnnotation ms) = all (isGeneric pos mp) ms
 isGeneric pos mp OpenFunctionAnnotation{} = False
 
 substituteVariables :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Either String Annotation
-substituteVariables pos mp usts id@GenericAnnotation{} = maybe (Left "") Right (Map.lookup id mp)
+substituteVariables pos mp usts id@GenericAnnotation{} = maybe (Right id) Right (Map.lookup id mp)
 substituteVariables pos mp usts id@AnnotationLiteral{} = Right id
-substituteVariables pos mp usts (Annotation id) = maybe (Left "") Right (Map.lookup (LhsIdentifer id pos) usts)
+substituteVariables pos mp usts (Annotation id) = maybe (Left $ noTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
 substituteVariables pos mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariables pos mp usts) args <*> substituteVariables pos mp usts ret
 substituteVariables pos mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariables pos mp usts) ms
 substituteVariables pos mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
@@ -151,13 +151,20 @@ specifyInternal pos a@(GenericAnnotation id cns) b@(Annotation ann) = do
     case anno of
         Right ann -> specifyInternal pos a ann
         Left err -> return $ Left err
-specifyInternal pos a@(OpenFunctionAnnotation oargs oret _ _) b@(FunctionAnnotation args ret) = do
-    (\case
+specifyInternal pos a@(StructAnnotation ms1) b@(StructAnnotation ms2)
+    | Map.size ms1 /= Map.size ms2 = return . Left $ unmatchedType a b pos
+    | Set.fromList (Map.keys ms1) == Set.fromList (Map.keys ms2) = (\case
+        Right _ -> return $ Right b
+        Left err -> return $ Left err) . sequence =<< zipWithM (specifyInternal pos) (Map.elems ms1) (Map.elems ms2)
+specifyInternal pos a@(OpenFunctionAnnotation oargs oret _ _) b@(FunctionAnnotation args ret) 
+    | length args /= length oargs = return $ callError oargs args
+    | otherwise = (\case
         Right _ -> return $ Right b
         Left err -> return $ Left err
         ) . sequence =<< zipWithM (specifyInternal pos) (oargs ++ [oret]) (args ++ [ret])
-specifyInternal pos a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation args ret) = do
-    (\case
+specifyInternal pos a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation args ret)
+    | length args /= length oargs = return $ callError oargs args
+    | otherwise = (\case
         Right _ -> return $ Right b
         Left err -> return $ Left err
         ) . sequence =<< zipWithM (specifyInternal pos) (oargs ++ [oret]) (args ++ [ret])
@@ -270,11 +277,17 @@ getAssumptionType (FunctionDef args ret body pos) =
                     return $ makeFunAnnotation args <$> ret
                 Left err -> return . Left $ err
 getAssumptionType (Call e args pos) = (\case
-                    Right (FunctionAnnotation fargs ret) -> do
+                    Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
                         anns <- sequence <$> mapM consistentTypes args
                         case anns of
-                            Right anns -> return $ ret <$ zipWithM (sameTypes pos mp) fargs anns
+                            Right anns -> let 
+                                spec = getPartialSpecificationRules pos Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) in
+                                case substituteVariables pos spec mp ret of
+                                    Right ret' -> case specify pos Map.empty mp fann (FunctionAnnotation anns ret') of
+                                        Right _ -> return $ Right ret'
+                                        Left err -> return $ Left err
+                                    Left err -> return $ Left err
                             Left err -> return $ Left err
                     Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> 
                         do
@@ -544,11 +557,17 @@ consistentTypes (Return n pos) =  getAnnotationState (LhsIdentifer "return" pos)
     Right (AnnotationLiteral "_") -> mapRight (consistentTypes n) (fmap Right . insertAnnotation (LhsIdentifer "return" pos))
     Right a -> (\b mp -> sameTypes pos mp a =<< b) <$> consistentTypes n <*> getTypeMap
 consistentTypes (Call e args pos) =  (\case 
-                    Right (FunctionAnnotation fargs ret) -> do
+                    Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
                         anns <- sequence <$> mapM consistentTypes args
                         case anns of
-                            Right anns -> return $ ret <$ zipWithM (sameTypes pos mp) fargs anns
+                            Right anns -> let 
+                                spec = getPartialSpecificationRules pos Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) in
+                                case substituteVariables pos spec mp ret of
+                                    Right ret' -> case specify pos Map.empty mp fann (FunctionAnnotation anns ret') of
+                                        Right _ -> return $ Right ret'
+                                        Left err -> return $ Left err
+                                    Left err -> return $ Left err
                             Left err -> return $ Left err
                     Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> 
                         do
