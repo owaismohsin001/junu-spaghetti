@@ -201,4 +201,9 @@ type AnnotationState = State (Annotation, (Annotations, UserDefinedTypes))
 
 type SubstituteState = State (Annotation, (Map.Map Annotation Annotation, UserDefinedTypes))
 
+newtype GenericPolicy = GenericPolicy{specifyGenericsAllowed :: Bool}
+
 type Result = Either
+
+openMethodGp :: GenericPolicy
+openMethodGp = GenericPolicy{specifyGenericsAllowed = False}
