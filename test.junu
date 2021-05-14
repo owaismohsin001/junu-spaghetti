@@ -110,10 +110,10 @@ impl fi(i: Int) => {
 
 fi(1)
 
-let fn = (c: {n: t{}}, a: t{}) => {
+let fn = (c: st{.n: t{}, .a: Int}, a: t{}) => {
     c.n = a
-    return a
+    return c.n
 }
 
-fn({n: {month: 2, weekday: 5, year: 1999}}, {month: 3, weekday: 5, year: 1999})
-fn({n: false}, true)
+fn({n: {month: 2, weekday: 5, year: 1999}, a: 1}, {month: 3, weekday: 5, year: 1999})
+fn({n: false, a: 4, x: "Hello"}, true)

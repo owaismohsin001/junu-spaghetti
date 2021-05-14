@@ -50,7 +50,7 @@ instance Show Annotation where
     show (Annotation id) = id
     show (AnnotationLiteral id) = id
     show (FunctionAnnotation anns an) = "(" ++ intercalate ", " (map show anns) ++ ") -> " ++ show an
-    show (GenericAnnotation id consts) = id ++ "{" ++ intercalate "< " (map show consts) ++ "}"
+    show (GenericAnnotation id consts) = id ++ "{" ++ intercalate ", " (map show consts) ++ "}"
     show (StructAnnotation anns) = 
         "{" ++ intercalate ", " (Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) anns) ++ "}"
     show (OpenFunctionAnnotation anns ret for impls) = "(" ++ intercalate ", " (map show anns) ++ ") -> " ++ show ret ++ 

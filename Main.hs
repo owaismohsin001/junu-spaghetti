@@ -329,6 +329,7 @@ getAssumptionType (StructN (Struct ns _)) =
             (return . Right $ AnnotationLiteral "_") 
             (const . return . Right . StructAnnotation $ Map.map (\(Right a) -> a) xs)) =<< mapM getAssumptionType ns
 getAssumptionType (Access st p pos) = (\case
+                    Right (GenericAnnotation g cns) -> return $ genericHas pos g p cns
                     Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
                     Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
                     Left err -> return $ Left err
@@ -341,6 +342,9 @@ getAssumptionType (Identifier x pos) = do
     case ann of
         Right a -> return $ Right a
         Left err  -> return $ Left err
+
+genericHas pos g givenLhs [] = Left $ "Could not find " ++ show givenLhs ++ " in " ++ show g ++ "\n" ++ showPos pos
+genericHas pos g givenLhs ((ConstraintHas lhs (AnnotationConstraint ann)):xs) = if lhs == givenLhs then Right ann else genericHas pos g givenLhs xs
 
 makeAssumptions :: State (Annotation, b) a -> b -> b
 makeAssumptions s m = snd $ execState s (AnnotationLiteral "_", m)
@@ -529,6 +533,7 @@ consistentTypes (StructN (Struct ns _)) =
             (return . Right $ AnnotationLiteral "_") 
             (const . return . Right . StructAnnotation $ Map.map (\(Right a) -> a) xs)) =<< mapM consistentTypes ns
 consistentTypes (Access st p pos) = (\case
+                    Right (GenericAnnotation g cns) -> return $ genericHas pos g p cns
                     Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
                     Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (consistentTypes st) pos
