@@ -50,8 +50,8 @@ mutu2 = (n: Int, a: Bool) => Int {
     return mutu1(n, n+1)
 }
 
-let apply = (f: (Int) -> Bool, a: Int) => Bool {
-    return f(a)
+let apply = (f: (a{}) -> b{}, x: a{}) => b{} {
+    return f(x)
 }
 
 let given = fl(1, true)(true)({name: "Hello's kitty", color: "Black", species: "Cat"})()
@@ -110,8 +110,7 @@ impl fi(i: Int) => {
 
 fi(1)
 
-
-let fn = (c: {n: t{}}, a: t{}) => t{} {
+let fn = (c: {n: t{}}, a: t{}) => {
     c.n = a
     return a
 }

@@ -8,6 +8,7 @@ import Text.Megaparsec as P hiding (State)
 import Text.Megaparsec.Char ( string, char, space, numberChar )
 import Debug.Trace ( trace )
 import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Read (readMaybe)
 import qualified Data.Set as Set
 import Control.Monad
 import qualified Data.Map as Map
@@ -57,14 +58,18 @@ numberParser =
         pos <- getSourcePos
         fs <- digit :: Parser Char
         str <- P.many digit :: Parser String
-        return . Lit $ LitInt (read (fs : str)) pos
+        return . Lit $ LitInt (
+            case readMaybe (fs : str) of
+                Just a -> a
+                Nothing -> undefined
+            ) pos
 
 booleanParser :: Parser Node
 booleanParser =
     do
         pos <- getSourcePos
         b <- keyword Parser.True <|> keyword Parser.False
-        return . Lit $ LitBool (read b) pos
+        return . Lit $ LitBool (b == "true") pos
 
 stringParser :: Char -> Parser Node
 stringParser c =
