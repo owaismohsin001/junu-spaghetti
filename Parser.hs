@@ -10,6 +10,7 @@ import Debug.Trace ( trace )
 import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Read (readMaybe)
 import qualified Data.Set as Set
+import Data.Maybe
 import Control.Monad
 import qualified Data.Map as Map
 import Nodes
@@ -44,6 +45,7 @@ data Keyword =
     | Open
     | Impl
     | For
+    | Newtype
     deriving(Show, Eq, Enum)
 
 notKeyword :: Parser ()
@@ -58,11 +60,7 @@ numberParser =
         pos <- getSourcePos
         fs <- digit :: Parser Char
         str <- P.many digit :: Parser String
-        return . Lit $ LitInt (
-            case readMaybe (fs : str) of
-                Just a -> a
-                Nothing -> undefined
-            ) pos
+        return . Lit $ LitInt (fromMaybe undefined (readMaybe (fs : str))) pos
 
 booleanParser :: Parser Node
 booleanParser =
@@ -96,9 +94,11 @@ lhsLittleId = identifierPrefixParser LhsIdentifer lower (lower <|> upper <|> dig
 lhsBigId :: Parser Lhs
 lhsBigId = identifierPrefixParser LhsIdentifer upper (lower <|> upper <|> digit)
 
-
 littleId :: Parser Node
 littleId = identifierPrefixParser Identifier lower (lower <|> upper <|> digit)
+
+strBigId :: Parser String
+strBigId = identifierPrefixParser const upper (lower <|> upper <|> digit)
 
 bigAnnotationId = identifierPrefixParser (
     \case
@@ -223,6 +223,11 @@ inlineIfParser = (\pos c t e -> IfExpr c t e pos)
     <*> (keyword Then *> spaces *> exprParser <* spaces)
     <*> (keyword Else *> spaces *> exprParser <* spaces)
 
+newTypeInstance = (\pos lhs args -> CreateNewType lhs args pos)
+    <$> getSourcePos
+    <*> lhsBigId
+    <*> tuple const exprParser
+
 atomParser :: Parser Node
 atomParser = do
         exp <- possibles
@@ -233,6 +238,7 @@ atomParser = do
         calls exp = (:) <$> tuple const exprParser <*> many (tuple const exprParser)
         possibles = choice $ map try [
             inlineIfParser,
+            newTypeInstance,
             numberParser,
             booleanParser,
             stringParser '\"',
@@ -251,10 +257,12 @@ constraintParser =
 
 annotationParser :: Parser Annotation
 annotationParser = 
-    try bigAnnotationId
+    try annId
+    <|> try (NewTypeInstanceAnnotation <$> strBigId <*> tuple const annotationParser)
     <|> try ((\(Identifier id _) cs -> GenericAnnotation id cs) <$> littleId <*> containerFunction "{" "}" "," const constraintParser)
     <|> try structAnnotationParser
     <|> (FunctionAnnotation <$> tuple const annotationParser <*> (spaces *> Text.Megaparsec.Char.string "->" *> spaces *> annotationParser))
+    where annId = bigAnnotationId <* notFollowedBy (spaces *> Text.Megaparsec.Char.string "(")
 
 declParser :: Parser Decl
 declParser = (\pos lhs ann expr -> Decl lhs expr ann pos) 
@@ -320,6 +328,13 @@ typeDeclParser = (\pos lhs def -> StructDef lhs def pos)
     <*> (keyword Type *> spaces *> lhsBigId <* spaces)
     <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> annotationParser)
 
+newTypeDeclParser :: Parser Decl
+newTypeDeclParser = (\pos lhs@(LhsIdentifer id _) args stc -> NewTypeDecl lhs (NewTypeAnnotation id args stc) pos)
+    <$> getSourcePos
+    <*> (keyword Newtype *> spaces *> lhsBigId <* spaces)
+    <*> tuple const annotationParser
+    <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> structParser annotationParser const)
+
 accessAssignParser :: Parser Decl
 accessAssignParser = (\(Access n p pos) rhs -> Assign (LhsAccess n p pos) rhs pos)
     <$> (lookAhead (littleId *> spaces *> Text.Megaparsec.Char.string "." *> spaces) *> accessParser)
@@ -346,6 +361,7 @@ implOpenFunDeclParser = (\pos lhs args ret exprs ft -> ImplOpenFunction lhs args
 singleStmntParser :: Parser Node
 singleStmntParser = choice $ map try [
         DeclN <$> openFunDeclParser,
+        DeclN <$> newTypeDeclParser,
         DeclN <$> implOpenFunDeclParser,
         DeclN <$> declParser,
         DeclN <$> typeDeclParser,

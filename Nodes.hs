@@ -22,7 +22,8 @@ data Annotation =
     | FunctionAnnotation [Annotation] Annotation 
     | StructAnnotation (Map.Map Lhs Annotation)
     | OpenFunctionAnnotation [Annotation] Annotation Annotation [Annotation]
-    | ConstraintContainer Constraint
+    | NewTypeAnnotation String [Annotation] (Map.Map Lhs Annotation)
+    | NewTypeInstanceAnnotation String [Annotation]
 
 data AnnotationNoImpl = 
     AnnotationNoImpl String
@@ -31,7 +32,8 @@ data AnnotationNoImpl =
     | FunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl 
     | StructAnnotationNoImpl (Map.Map Lhs AnnotationNoImpl)
     | OpenFunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl AnnotationNoImpl
-    | ConstraintContainerNoPos Constraint
+    | NewTypeAnnotationNoImpl String [AnnotationNoImpl] (Map.Map Lhs AnnotationNoImpl)
+    | NewTypeInstanceAnnotationNoImpl String [AnnotationNoImpl]
     deriving (Eq, Ord)
 
 toAnnotationNoImpl :: Annotation -> AnnotationNoImpl
@@ -41,7 +43,8 @@ toAnnotationNoImpl (GenericAnnotation a b) = GenericAnnotationNoImpl a b
 toAnnotationNoImpl (FunctionAnnotation a b) = FunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b)
 toAnnotationNoImpl (StructAnnotation map) = StructAnnotationNoImpl (Map.map toAnnotationNoImpl map)
 toAnnotationNoImpl (OpenFunctionAnnotation a b c _) = OpenFunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b) (toAnnotationNoImpl c)
-toAnnotationNoImpl (ConstraintContainer a) = ConstraintContainerNoPos a
+toAnnotationNoImpl (NewTypeAnnotation s a b) = NewTypeAnnotationNoImpl s (map toAnnotationNoImpl a) (Map.map toAnnotationNoImpl b)
+toAnnotationNoImpl (NewTypeInstanceAnnotation a b) = NewTypeInstanceAnnotationNoImpl a (map toAnnotationNoImpl b)
 
 instance Eq Annotation where a == b = toAnnotationNoImpl a == toAnnotationNoImpl b
 instance Ord Annotation where a `compare` b = toAnnotationNoImpl a `compare` toAnnotationNoImpl b
@@ -55,6 +58,8 @@ instance Show Annotation where
         "{" ++ intercalate ", " (Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) anns) ++ "}"
     show (OpenFunctionAnnotation anns ret for impls) = "(" ++ intercalate ", " (map show anns) ++ ") -> " ++ show ret ++ 
         " in {" ++ intercalate ", " (map show impls) ++ "} for " ++ show for
+    show (NewTypeAnnotation n as res) = n ++ "(" ++ intercalate ", " (map show as) ++ ") = " ++ show res
+    show (NewTypeInstanceAnnotation n as) = n ++ "(" ++ intercalate ", " (map show as) ++ ")"
 
 data LhsNoPos = 
     LhsIdentiferNoPos String 
@@ -108,6 +113,7 @@ data Decl =
     | StructDef Lhs Annotation P.SourcePos
     | OpenFunctionDecl Lhs Annotation P.SourcePos
     | ImplOpenFunction Lhs [(Lhs, Annotation)] (Maybe Annotation) [Node] Annotation P.SourcePos
+    | NewTypeDecl Lhs Annotation P.SourcePos
     | Expr Node
     deriving(Show)
 
@@ -118,6 +124,7 @@ data DeclNoPos =
     | StructDefNoPos Lhs Annotation
     | OpenFunctionDeclNoPos Lhs Annotation
     | ImplOpenFunctionNoPos Lhs [(Lhs, Annotation)] (Maybe Annotation) [Node] Annotation
+    | NewTypeDeclNoPos Lhs Annotation
     | ExprNoPos Node
     deriving(Show, Eq, Ord)
 
@@ -128,6 +135,7 @@ toDeclNoPos (StructDef a b _) = StructDefNoPos a b
 toDeclNoPos (FunctionDecl a _ _) = FunctionDeclNoPos a
 toDeclNoPos (OpenFunctionDecl a b _) = OpenFunctionDeclNoPos a b
 toDeclNoPos (ImplOpenFunction a b c d e _) = ImplOpenFunctionNoPos a b c d e
+toDeclNoPos (NewTypeDecl a b _) = NewTypeDeclNoPos a b
 toDeclNoPos (Expr e) = ExprNoPos e
 
 instance Eq Decl where
@@ -159,6 +167,7 @@ data Node =
     | Access Node Lhs P.SourcePos
     | IfStmnt Node [Node] [Node] P.SourcePos
     | IfExpr Node Node Node P.SourcePos
+    | CreateNewType Lhs [Node] P.SourcePos
     deriving(Show)
 
 data NodeNoPos =
@@ -172,6 +181,7 @@ data NodeNoPos =
     | AccessNoPos Node Lhs
     | IfStmntNoPos Node [Node] [Node]
     | IfExprNoPos Node Node Node
+    | CreateNewTypeNoPos Lhs [NodeNoPos]
     deriving(Show, Ord, Eq)
 
 toNodeNoPos :: Node -> NodeNoPos
@@ -184,6 +194,7 @@ toNodeNoPos (StructN st) = StructNNoPos st
 toNodeNoPos (Access a b _) = AccessNoPos a b
 toNodeNoPos (IfStmnt a b c _) = IfStmntNoPos a b c
 toNodeNoPos (IfExpr a b c _) = IfExprNoPos a b c
+toNodeNoPos (CreateNewType a b _) = CreateNewTypeNoPos a (map toNodeNoPos b)
 
 instance Eq Node where
     a == b = toNodeNoPos a == toNodeNoPos b

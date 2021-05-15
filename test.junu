@@ -2,10 +2,12 @@ type Pet = {species: String, name: String, color: String}
 type Moo = {name: String, age: Int, male: Bool, pet: Pet}
 type Person = {name: String, age: Int, male: Bool, pet: Pet}
 type Date = {month: Int, weekday: Int, year: Int}
+newtype ML(a{}, b{}) = {a: a{}, b: b{}}
 
-let x = 1
+let s: ML(Int, Bool) = ML(1, true)
+let x = s.a
 
-let b: Bool = true
+let b: Bool = s.b
 
 x = 4
 let i = 0
@@ -115,5 +117,12 @@ let fn = (c: st{.n: t{}, .a: Int}, a: t{}) => {
     return c.n
 }
 
+let swapML = (ml: ML(a{}, b{})) => {
+    return ML(ml.b, ml.a)
+}
+
 fn({n: {month: 2, weekday: 5, year: 1999}, a: 1}, {month: 3, weekday: 5, year: 1999})
-fn({n: false, a: 4, x: "Hello"}, true)
+let btool = fn({n: false, a: 4, x: "Hello"}, true)
+
+swapML(s)
+swapML(ML(st, st.pet))
