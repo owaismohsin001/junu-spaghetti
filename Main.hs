@@ -104,19 +104,74 @@ substituteVariables pos mp usts (FunctionAnnotation args ret) = FunctionAnnotati
 substituteVariables pos mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariables pos mp usts) ms
 substituteVariables pos mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
-addTypeVariable :: P.SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
-addTypeVariable pos k v =  do
-    (a, (mp, usts)) <- get
+-- addTypeVariable :: P.SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
+-- addTypeVariable pos k v =  do
+--     (a, ((rs, mp), usts)) <- get
+--     case Map.lookup k mp of
+--         Nothing -> addToMap a rs mp usts
+--         Just a -> case sameTypes pos usts a v of
+--             Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts else return $ Left err
+--             Right a -> addToMap a rs mp usts
+--         where 
+--             addToMap :: Annotation ->  Map.Map Annotation (Set.Set Annotation) -> Map.Map Annotation Annotation -> UserDefinedTypes -> SubstituteState (Either String Annotation)
+--             addToMap a rs mp usts = do
+--                 put (a, ((rs, Map.insert k v mp), usts))
+--                 return $ Right v
+
+-- addTypeVariableGeneralized :: P.SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
+addTypeVariableGeneralized pos stmnt k v =  do
+    (a, ((rs, mp), usts)) <- get
     case Map.lookup k mp of
-        Nothing -> addToMap a mp usts
+        Nothing -> addToMap a rs mp usts
         Just a -> case sameTypes pos usts a v of
-            Left err -> if a == AnnotationLiteral "_" then addToMap a mp usts else return $ Left err
-            Right a -> addToMap a mp usts
+            Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts else return $ Left err
+            Right a -> addToMap a rs mp usts
         where 
-            addToMap :: Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> SubstituteState (Either String Annotation)
-            addToMap a mp usts = do
-                put (a, (Map.insert k v mp, usts))
+            addToMap :: Annotation ->  Map.Map Annotation (Set.Set Annotation) -> Map.Map Annotation Annotation -> UserDefinedTypes -> SubstituteState (Either String Annotation)
+            addToMap a rs mp usts = do
+                put (a, ((rs, Map.insert k v mp), usts))
+                stmnt
                 return $ Right v
+
+addTypeVariable :: SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
+addTypeVariable pos = addTypeVariableGeneralized pos (updateRelations pos)
+
+-- This is written horribly, rewrite it
+updateSingleRelation pos r = do
+    (a, ((rs, mp), usts)) <- get
+    case Map.lookup r rs of
+        Just rl -> sequence <$> mapM (uncurry f) mls' where 
+            m = Map.filterWithKey (\k _ -> k `Set.member` rl) mp
+            mls = Map.toList m
+            fnv = firstNonUnderscore mls
+            mls' = map (\(k, _) -> (k, fnv)) mls
+            f = addTypeVariableGeneralized pos (return $ Right ())
+
+            firstNonUnderscore [] = error "IDK"
+            firstNonUnderscore ((_, AnnotationLiteral "_"):xs) = firstNonUnderscore xs
+            firstNonUnderscore ((_, ann):xs) = ann
+        Nothing -> return . Left $ "No relation on " ++ show r ++ " has been established"
+
+updateRelations :: P.SourcePos -> SubstituteState (Either String ())
+updateRelations pos = do
+    (a, ((rs, mp), usts)) <- get
+    x <- mapM (updateSingleRelation pos) $ Map.keys rs
+    case sequence x of
+        Right _ -> return $ Right ()
+        Left err -> return $ Left err
+
+addRelation :: P.SourcePos -> Annotation -> Annotation -> SubstituteState (Either String ())
+addRelation pos r nv = do
+    (a, ((rs, mp), usts)) <- get
+    case Map.lookup r rs of
+        Just rl -> do
+            let nrs = Map.insert r (rl `Set.union` Set.singleton nv) rs
+            put (a, ((nrs, mp), usts))
+            Right () <$ updateSingleRelation pos r
+        Nothing -> do
+            let nrs = Map.insert r (Set.singleton nv) rs
+            put (a, ((nrs, mp), usts))
+            Right () <$ updateSingleRelation pos r
 
 applyConstraintState :: SourcePos -> Annotation -> Constraint -> SubstituteState (Either String Annotation)
 applyConstraintState pos ann (ConstraintHas lhs cn) = 
@@ -131,6 +186,15 @@ applyConstraintState pos ann (ConstraintHas lhs cn) =
                 case LhsIdentifer id pos `Map.lookup` mp of
                     Just ann -> applyConstraintState pos ann cn
                     Nothing -> return . Left $ "No type named " ++ id ++ " found\n" ++ showPos pos
+            NewTypeInstanceAnnotation id args -> 
+                        accessNewType args
+                        (\(NewTypeAnnotation _ _ ps) -> 
+                            case Map.lookup lhs ps of
+                                Just ann -> applyConstraintState pos ann cn
+                                Nothing -> return . Left $ "Could not find " ++ show lhs ++ " in " ++ show ps ++ "\n" ++ showPos pos
+                            ) 
+                        (\a -> return . Left $ "Cannot get " ++ show lhs ++ " from type " ++ show a ++ "\n" ++ showPos pos)
+                        (LhsIdentifer id pos)
             g@(GenericAnnotation id cns) -> return $ genericHas pos mp lhs cns
             a -> return . Left $ "Can't search for field " ++ show lhs ++ " in " ++ show a ++ "\n" ++ showPos pos
 applyConstraintState pos ann2 (AnnotationConstraint ann1) = do
@@ -164,6 +228,8 @@ specifyInternal pos a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer 
 specifyInternal pos a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
     Just a -> specifyInternal pos a b
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
+specifyInternal pos a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = 
+    if and $ zipWith (==) cns1 cns2 then addRelation pos b a $> Right b else undefined
 specifyInternal pos a@(StructAnnotation ms1) b@(StructAnnotation ms2)
     | Map.size ms1 /= Map.size ms2 = return . Left $ unmatchedType a b pos
     | Set.fromList (Map.keys ms1) == Set.fromList (Map.keys ms2) = (\case
@@ -198,29 +264,29 @@ specifyInternal pos a@(GenericAnnotation id cns) b =
 specifyInternal pos a b = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
 
 specify :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
-specify pos base mp a b = evalState (specifyInternal pos a b) (a, (base, mp))
+specify pos base mp a b = evalState (specifyInternal pos a b) (a, ((Map.empty, base), mp))
 
 getPartialSpecificationRules :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Map.Map Annotation Annotation
-getPartialSpecificationRules pos base mp a b = (fst . snd) (execState (specifyInternal pos a b) (a, (base, mp)))
+getPartialSpecificationRules pos base mp a b = (snd . fst . snd) (execState (specifyInternal pos a b) (a, ((Map.empty, base), mp)))
 
 getPartialNoUnderScoreSpecificationRules :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Map.Map Annotation Annotation
 getPartialNoUnderScoreSpecificationRules pos base mp a b = 
     Map.mapWithKey (\k a -> if a == AnnotationLiteral "_" then k else a) $ getPartialSpecificationRules pos base mp a b
 
--- Map.mapWithKey (\k a -> if a == AnnotationLiteral "_" then k else a) $ getPartialSpecificationRules pos Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_"))
-
 getSpecificationRules :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes  -> Annotation -> Annotation -> Either String (Map.Map Annotation Annotation)
 getSpecificationRules pos base mp a b = case fst st of
-    Right _ -> Right (fst $ snd $ snd st)
+    Right _ -> Right (snd $ fst $ snd $ snd st)
     Left err -> Left err 
-    where st = runState (specifyInternal pos a b) (a, (base, mp))
-
+    where st = runState (specifyInternal pos a b) (a, ((Map.empty, base), mp))
 
 
 sameTypesBool pos mp a b = case sameTypes pos mp a b of
                         Right _ -> True
                         Left _ -> False
-                                            
+
+specifyTypesBool pos base usts a b = case specify pos base usts a b of
+                        Right _ -> True
+                        Left _ -> False                                     
 
 isGenericAnnotation a = case a of 
     a@GenericAnnotation{} -> True
@@ -239,6 +305,8 @@ getAssumptionType (CreateNewType lhs args pos) = do
             Just (NewTypeAnnotation id anns _) -> 
                 if length anns == length args then NewTypeInstanceAnnotation id <$> argsn
                 else Left $ "Can't match arguments " ++ show as ++ " with " ++ show anns
+            Just a -> error (show a)
+            Nothing -> Left $ noTypeFound (show lhs) pos
         Left err -> return $ Left err
 getAssumptionType (DeclN (OpenFunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs ann
 getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft pos)) = do
@@ -338,7 +406,7 @@ getAssumptionType (Call e args pos) = (\case
                                                     Just a -> maybe 
                                                         (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
                                                         (const $ return $ Right ret')
-                                                        (find (sameTypesBool pos mp a) impls)
+                                                        (find (\b -> specifyTypesBool pos base mp b a) impls)
                                                     Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
                                                 Left err -> return $ Left err
                                         Nothing -> case substituteVariables pos spec mp oret of
@@ -497,12 +565,6 @@ sameTypes = sameTypesGeneric (False, Map.empty)
 getTypeMap :: State (a, (b, UserDefinedTypes)) (Map.Map Lhs Annotation)
 getTypeMap = gets (snd . snd)
 
--- accessNewType f g fid@(LhsIdentifer id pos) = do
---             mp <- getTypeMap
---             case Map.lookup fid mp of
---                 Just x@(NewTypeAnnotation id args map) -> f x
---                 Just a -> g a
---                 Nothing -> return . Left $ noTypeFound id pos
 accessNewType givenArgs f g fid@(LhsIdentifer id pos) = do
             mp <- getTypeMap
             case Map.lookup fid mp of
@@ -659,7 +721,7 @@ consistentTypes (Call e args pos) =  (\case
                                                     Just a -> maybe 
                                                         (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
                                                         (const $ return $ Right ret')
-                                                        (find (sameTypesBool pos mp a) impls)
+                                                        (find (\b -> specifyTypesBool pos base mp b a) impls)
                                                     Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
                                                 Left err -> return $ Left err
                                         Nothing -> case substituteVariables pos spec mp oret of

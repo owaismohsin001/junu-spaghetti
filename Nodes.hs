@@ -2,6 +2,7 @@ module Nodes where
 import qualified Data.Map as Map
 import Control.Monad.State ( State )
 import Data.List
+import qualified Data.Set as Set
 import Text.Megaparsec as P hiding (State)
 
 data BinOp = BinOpNode Node String Node Pos
@@ -210,7 +211,7 @@ type UserDefinedTypes = Map.Map Lhs Annotation
 
 type AnnotationState = State (Annotation, (Annotations, UserDefinedTypes))
 
-type SubstituteState = State (Annotation, (Map.Map Annotation Annotation, UserDefinedTypes))
+type SubstituteState = State (Annotation, ((Map.Map Annotation (Set.Set Annotation), Map.Map Annotation Annotation), UserDefinedTypes))
 
 newtype GenericPolicy = GenericPolicy{specifyGenericsAllowed :: Bool}
 

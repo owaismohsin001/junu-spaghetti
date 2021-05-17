@@ -2,9 +2,9 @@ type Pet = {species: String, name: String, color: String}
 type Moo = {name: String, age: Int, male: Bool, pet: Pet}
 type Person = {name: String, age: Int, male: Bool, pet: Pet}
 type Date = {month: Int, weekday: Int, year: Int}
-newtype ML(a{}, b{}) = {a: a{}, b: b{}}
+newtype Tup(a{}, b{}) = {a: a{}, b: b{}}
 
-let s: ML(Int, Bool) = ML(1, true)
+let s = Tup(1, true)
 let x = s.a
 
 let b: Bool = s.b
@@ -35,10 +35,6 @@ let go = (a: Int, b: Int) => {
     }
     let ans = a+b
     return f(ans)
-}
-
-let ol = (a: Bool, b: Bool) => Bool {
-    return (a & b) | a
 }
 
 mutu1(Int, Int) => Int
@@ -117,12 +113,28 @@ let fn = (c: st{.n: t{}, .a: Int}, a: t{}) => {
     return c.n
 }
 
-let swapML = (ml: ML(a{}, b{})) => {
-    return ML(ml.b, ml.a)
+let swapG = (a: x{.a: a{}, .b: b{}}, f: (b{}, a{}) -> y{.a: b{}, .b: a{}}) => {
+    return f(a.b, a.a)
+}
+
+let swapML = (ml: x{.a: a{}, .b: b{}}) => {
+    return Tup(ml.b, ml.a)
 }
 
 fn({n: {month: 2, weekday: 5, year: 1999}, a: 1}, {month: 3, weekday: 5, year: 1999})
 let btool = fn({n: false, a: 4, x: "Hello"}, true)
 
+swapML(Tup(st, st.pet))
 swapML(s)
-swapML(ML(st, st.pet))
+
+open fst(s{.a: a{}, .b: b{}}) => a{} for s{.a: a{}, .b: b{}}
+
+impl fst(s: Tup(a{}, b{})) => {
+    return s.a
+} for Tup(a{}, b{})
+
+fst(s)
+
+let identity = (a: x{}) => { return a }
+
+apply(identity, 1)
