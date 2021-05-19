@@ -96,7 +96,12 @@ substituteConstraints pos rels mp usts (ConstraintHas lhs cs) = ConstraintHas lh
 substituteConstraints pos rels mp usts (AnnotationConstraint ann) = AnnotationConstraint <$> substituteVariables pos rels mp usts ann
 
 substituteVariables :: SourcePos -> TypeRelations -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Either String Annotation
-substituteVariables pos rels mp usts fid@(GenericAnnotation id cns) = maybe (GenericAnnotation id <$> mapM (substituteConstraints pos rels mp usts) cns) Right (Map.lookup fid mp)
+substituteVariables pos rels mp usts fid@(GenericAnnotation id cns) = 
+    maybe (GenericAnnotation id <$> mapM (substituteConstraints pos rels mp usts) cns) (
+        \x -> case firstPreferablyDefinedRelation pos mp rels x of
+            Right a -> Right a
+            Left _ -> Right x
+    ) (Map.lookup fid mp)
 substituteVariables pos rels mp usts id@AnnotationLiteral{} = Right id
 substituteVariables pos rels mp usts fid@(Annotation id) = maybe (Left $ noTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
 substituteVariables pos rels mp usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id <$> mapM (substituteVariables pos rels mp usts) anns <*> mapM (substituteVariables pos rels mp usts) annMap
@@ -106,7 +111,11 @@ substituteVariables pos rels mp usts (StructAnnotation ms) = StructAnnotation <$
 substituteVariables pos rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
 getLookupTypeIfAvailable :: Annotation -> SubstituteState Annotation
-getLookupTypeIfAvailable = return
+getLookupTypeIfAvailable k = do
+    (a, ((rs, mp), usts)) <- get
+    case Map.lookup k mp of
+        Just k -> getLookupTypeIfAvailable k
+        Nothing -> return k
 
 changeType :: P.SourcePos -> Annotation -> Annotation -> SubstituteState (Either String ())
 changeType pos k v = do
@@ -118,12 +127,11 @@ changeType pos k v = do
 reshuffleTypes :: P.SourcePos -> SubstituteState ()
 reshuffleTypes pos = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeType pos) mp) =<< get
 
-firstPreferablyDefinedRelation :: P.SourcePos -> Annotation -> SubstituteState (Either String Annotation)
-firstPreferablyDefinedRelation pos k = do
-    (a, ((rs, mp), usts)) <- get
+-- firstPreferablyDefinedRelation :: P.SourcePos -> Annotation -> SubstituteState (Either String Annotation)
+firstPreferablyDefinedRelation pos mp rs k =
     case Map.lookup k rs of
-        Just s -> if Set.null stf then return . Right $ Set.elemAt 0 s else return . Right $ Set.elemAt 0 stf where stf = Set.filter (\x -> maybe False (const True) (Map.lookup x mp)) s
-        Nothing -> return . Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
+        Just s -> if Set.null stf then Right $ Set.elemAt 0 s else Right $ Set.elemAt 0 stf where stf = Set.filter (\x -> maybe False (const True) (Map.lookup x mp)) s
+        Nothing -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
 
 addTypeVariableGeneralized pos stmnt k v =  do
     (a, ((rs, mp), usts)) <- get

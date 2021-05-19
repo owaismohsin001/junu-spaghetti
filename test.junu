@@ -131,7 +131,7 @@ let identity = (a: x{}) => { return a }
 open fst(s{.a: a{}, .b: b{}}) => a{} for s{.a: a{}, .b: b{}}
 
 impl fst(s: Tup(a{}, b{})) => {
-    return s.a
+    return identity(s.a)
 } for Tup(a{}, b{})
 
 fst(swapML(s))
