@@ -125,7 +125,8 @@ fn({n: {month: 2, weekday: 5, year: 1999}, a: 1}, {month: 3, weekday: 5, year: 1
 let btool = fn({n: false, a: 4, x: "Hello"}, true)
 
 swapML(Tup(st, st.pet))
-swapML(s)
+
+let identity = (a: x{}) => { return a }
 
 open fst(s{.a: a{}, .b: b{}}) => a{} for s{.a: a{}, .b: b{}}
 
@@ -133,8 +134,8 @@ impl fst(s: Tup(a{}, b{})) => {
     return s.a
 } for Tup(a{}, b{})
 
-fst(s)
+fst(swapML(s))
 
-let identity = (a: x{}) => { return a }
-
-apply(identity, 1)
+identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
+    return Tup(a, b)
+})))

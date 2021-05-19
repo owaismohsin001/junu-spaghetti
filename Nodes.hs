@@ -211,7 +211,8 @@ type UserDefinedTypes = Map.Map Lhs Annotation
 
 type AnnotationState = State (Annotation, (Annotations, UserDefinedTypes))
 
-type SubstituteState = State (Annotation, ((Map.Map Annotation (Set.Set Annotation), Map.Map Annotation Annotation), UserDefinedTypes))
+type TypeRelations = Map.Map Annotation (Set.Set Annotation)
+type SubstituteState = State (Annotation, ((TypeRelations, Map.Map Annotation Annotation), UserDefinedTypes))
 
 newtype GenericPolicy = GenericPolicy{specifyGenericsAllowed :: Bool}
 
