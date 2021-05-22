@@ -2,6 +2,7 @@ type Pet = {species: String, name: String, color: String}
 type Moo = {name: String, age: Int, male: Bool, pet: Pet}
 type Person = {name: String, age: Int, male: Bool, pet: Pet}
 type Date = {month: Int, weekday: Int, year: Int}
+type C = {}
 newtype Tup(a{}, b{}) = {a: a{}, b: b{}}
 
 let s = Tup(1, true)
@@ -11,12 +12,6 @@ let b: Bool = s.b
 
 x = 4
 let i = 0
-
-let z = x*3+i
-
-let y = b | !b
-
-let str = "Hello"
 
 let fl = (a: Int, b: Bool) => {
     return (n: Bool) => {
@@ -139,3 +134,9 @@ fst(swapML(s))
 identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
     return Tup(a, b)
 })))
+
+let ftr = (a: String, b: String | Int) => {
+    if b is String {
+        return a+b
+    }
+}

@@ -68,20 +68,37 @@ getTypeStateFrom f pos = do
         Right res -> getTypeState res pos
         Left err -> return $ Left err
 
-firstInferrableReturn :: P.SourcePos -> Annotations -> [Node] -> Either String Node
-firstInferrableReturn pos ans [] = Left $ "Could not infer the type of function at \n" ++ showPos pos
-firstInferrableReturn pos ans (IfStmnt c ts es _:xs) = 
-    mapLeft (firstInferrableReturn pos ans [c]) (\_ -> 
-            mapLeft (firstInferrableReturn pos ans ts) (\_ -> 
-                mapLeft (firstInferrableReturn pos ans es) (const $ firstInferrableReturn pos ans xs)
-                )
-        )
-firstInferrableReturn pos ans ((DeclN (Decl _ rhs _ _)):xs) = 
-    mapLeft (firstInferrableReturn pos ans [rhs]) (const $ firstInferrableReturn pos ans xs)
-firstInferrableReturn pos ans ((DeclN (Assign _ rhs _)):xs) = 
-    mapLeft (firstInferrableReturn pos ans [rhs]) (const $ firstInferrableReturn pos ans xs)
-firstInferrableReturn pos ans ((Return a _):_) = Right a
-firstInferrableReturn pos ans (_:xs) = firstInferrableReturn pos ans xs
+firstInferrableReturn :: P.SourcePos -> [Node] -> AnnotationState (Either String Node)
+firstInferrableReturn pos [] = return . Left $ "Could not infer the type of function at \n" ++ showPos pos
+firstInferrableReturn pos (IfStmnt cond ts es _:xs) = do
+    scope@(_, (_, mp)) <- get
+    c <- getAssumptionType cond
+    case sameTypes pos mp (AnnotationLiteral "Bool") <$> c of
+        Right _ -> do
+            t <- firstInferrableReturn pos ts
+            case t of
+                Right a -> return $ Right a
+                Left _ -> do
+                    put scope
+                    e <- firstInferrableReturn pos es
+                    case e of
+                        Right a -> return $ Right a
+                        Left err -> do
+                            put scope
+                            return $ Left err
+        Left err -> return $ Left err
+firstInferrableReturn pos (n@(DeclN (Decl _ rhs _ _)):xs) = do
+    getAssumptionType n
+    as <- firstInferrableReturn pos [rhs] 
+    bs <- firstInferrableReturn pos xs
+    return $ mapLeft as (const bs)
+firstInferrableReturn pos (n@(DeclN (Assign _ rhs _)):xs) = do
+    getAssumptionType n
+    as <- firstInferrableReturn pos [rhs] 
+    bs <- firstInferrableReturn pos xs
+    return $ mapLeft as (const bs)
+firstInferrableReturn pos ((Return a _):_) = return $ Right a
+firstInferrableReturn pos (_:xs) = firstInferrableReturn pos xs
 
 isGeneric :: P.SourcePos -> UserDefinedTypes -> Annotation -> Bool
 isGeneric pos mp GenericAnnotation{} = True
@@ -108,6 +125,7 @@ substituteVariables pos rels mp usts (NewTypeAnnotation id anns annMap) = NewTyp
 substituteVariables pos rels mp usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (substituteVariables pos rels mp usts) anns
 substituteVariables pos rels mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariables pos rels mp usts) args <*> substituteVariables pos rels mp usts ret
 substituteVariables pos rels mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariables pos rels mp usts) ms
+substituteVariables pos rels mp usts (TypeUnion ts) = TypeUnion . Set.fromList <$> mapM (substituteVariables pos rels mp usts) (Set.toList ts)
 substituteVariables pos rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
 getLookupTypeIfAvailable :: Annotation -> SubstituteState Annotation
@@ -127,7 +145,6 @@ changeType pos k v = do
 reshuffleTypes :: P.SourcePos -> SubstituteState ()
 reshuffleTypes pos = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeType pos) mp) =<< get
 
--- firstPreferablyDefinedRelation :: P.SourcePos -> Annotation -> SubstituteState (Either String Annotation)
 firstPreferablyDefinedRelation pos mp rs k =
     case Map.lookup k rs of
         Just s -> if Set.null stf then Right $ Set.elemAt 0 s else Right $ Set.elemAt 0 stf where stf = Set.filter (\x -> maybe False (const True) (Map.lookup x mp)) s
@@ -222,7 +239,7 @@ applyConstraintState pos ann (ConstraintHas lhs cn) =
             g@(GenericAnnotation id cns) -> return $ genericHas pos mp lhs cns
             a -> return . Left $ "Can't search for field " ++ show lhs ++ " in " ++ show a ++ "\n" ++ showPos pos
 applyConstraintState pos ann2 (AnnotationConstraint ann1) = do
-    a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos ann2 ann1 $> Right ann1 else addTypeVariable pos ann1 ann2
+    a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos ann2 ann1 *> addRelation pos ann1 ann2 $> Right ann1 else addTypeVariable pos ann1 ann2
     case a of
         Right _ -> specifyInternal pos ann1 ann2
         Left err -> return $ Left err
@@ -306,6 +323,10 @@ getSpecificationRules pos base mp a b = case fst st of
     where st = runState (specifyInternal pos a b) (a, ((Map.empty, base), mp))
 
 
+sameTypesGenericBool gs pos mp a b = case sameTypesGeneric gs pos mp a b of
+                        Right _ -> True
+                        Left _ -> False
+
 sameTypesBool pos mp a b = case sameTypes pos mp a b of
                         Right _ -> True
                         Left _ -> False
@@ -384,9 +405,10 @@ getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
 getAssumptionType (DeclN (Assign (LhsAccess access prop accPos) expr pos)) = 
     getTypeStateFrom (getAssumptionType (Access access prop accPos)) pos
 getAssumptionType (DeclN (Assign lhs n _)) = mapRight (getAssumptionType n) (fmap Right . insertAnnotation lhs)
+getAssumptionType (CastNode lhs ann _) = Right <$> (insertAnnotation lhs ann $> AnnotationLiteral "Bool")
 getAssumptionType (DeclN (Expr n)) = getAssumptionType n
-getAssumptionType (Return n _) = getAssumptionType n
-getAssumptionType IfStmnt{} = return . Right $ AnnotationLiteral "_"
+getAssumptionType (Return n pos) = getAssumptionType n
+getAssumptionType (IfStmnt cond ts es pos) = return . Right $ AnnotationLiteral "_"
 getAssumptionType (IfExpr c t e _) = getAssumptionType t
 getAssumptionType (FunctionDef args ret body pos) = 
     case ret of
@@ -398,11 +420,12 @@ getAssumptionType (FunctionDef args ret body pos) =
             put ans
             mapM_ getAssumptionType body
             (new_ans, _) <- gets snd
-            case firstInferrableReturn pos new_ans body of
-                Right st -> do
-                    ret <- getAssumptionType st
-                    modify (const whole_old_ans)
-                    return $ makeFunAnnotation args <$> ret
+            x <- firstInferrableReturn pos body
+            case x of
+                Right ret -> do
+                    typ <- getAssumptionType ret
+                    put whole_old_ans
+                    return (makeFunAnnotation args <$> typ)
                 Left err -> return . Left $ err
 getAssumptionType (Call e args pos) = (\case
                     Right fann@(FunctionAnnotation fargs ret) -> do
@@ -518,6 +541,11 @@ sameTypesGeneric gs pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation 
     else Left $ unmatchedType a b pos
 sameTypesGeneric gs pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
     | e1 == e2 && length as1 == length as2 = zipWithM (sameTypesGeneric gs pos mp) as1 as2 *> Right b
+sameTypesGeneric gs pos mp a@(TypeUnion as) b@(TypeUnion bs)
+    | Set.size as /= Set.size bs = Left $ unmatchedType a b pos
+    | all (f as) (Set.toList bs) = Right a
+    where
+        f ps2 v1 = isJust $ find (sameTypesGenericBool gs pos mp v1) ps2 
 sameTypesGeneric gs pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
     | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then Right a else Left $ unmatchedType a b pos
     | Map.size ps1 /= Map.size ps2 = Left $ unmatchedType a b pos
@@ -558,7 +586,7 @@ sameTypesGeneric tgs@(sensitive, gs) pos mp b a@(GenericAnnotation _ acs) =
     else Left $ unmatchedType a b pos
 sameTypesGeneric (sensitive, gs) pos mp ft@(OpenFunctionAnnotation anns1 ret1 _ _) (OpenFunctionAnnotation anns2 ret2 _ _) =
     zipWithM (sameTypesGeneric (sensitive, gs') pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2]) *> Right ft where 
-        gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
+        gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs 
 sameTypesGeneric (sensitive, gs) pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
     zipWithM (sameTypesGeneric (sensitive, gs') pos mp) (anns1 ++ [ret1]) (args ++ [ret2]) *> Right a where
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
@@ -591,6 +619,14 @@ sameTypes = sameTypesGeneric (False, Map.empty)
 getTypeMap :: State (a, (b, UserDefinedTypes)) (Map.Map Lhs Annotation)
 getTypeMap = gets (snd . snd)
 
+excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState Annotation
+excludeFromUnion pos a (TypeUnion ts) = do
+    (_, (_, usts)) <- get
+    return . TypeUnion . Set.fromList . remove . Set.toList $ Set.map (\b -> (sameTypes pos usts a b, b)) ts where
+    remove [] = []
+    remove ((Right a, _):xs) = remove xs
+    remove ((Left _, a):xs) = a : remove xs
+
 accessNewType givenArgs f g fid@(LhsIdentifer id pos) = do
             mp <- getTypeMap
             case Map.lookup fid mp of
@@ -600,6 +636,7 @@ accessNewType givenArgs f g fid@(LhsIdentifer id pos) = do
                         Left err -> return . Left $ err
                 Just a -> g a
                 Nothing -> return . Left $ noTypeFound id pos
+
 consistentTypes ::  Node -> AnnotationState (Either String Annotation)
 consistentTypes (DeclN (Decl lhs rhs _ pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
     <$> getAnnotationState lhs <*> consistentTypes rhs <*> getTypeMap
@@ -650,6 +687,33 @@ consistentTypes (CreateNewType lhs args pos) = do
                 else Left $ "Can't match arguments " ++ show as ++ " with " ++ show anns
         Left err -> return $ Left err
 consistentTypes (DeclN (Expr n)) = consistentTypes n
+consistentTypes (IfStmnt (CastNode lhs ann _) ts es pos) = do
+    scope@(_, (_, mp)) <- get
+    insertAnnotation lhs ann
+    mapM_ getAssumptionType ts
+    t <- sequence <$> mapM consistentTypes ts
+    annRet <- getAnnotationState (LhsIdentifer "return" pos)
+    put scope
+    case annRet of
+        Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+        Left _ -> return $ AnnotationLiteral "_"
+    typLhs <- getAnnotationState lhs
+    case typLhs of
+        Right ts@TypeUnion{} -> insertAnnotation lhs =<< excludeFromUnion pos ann ts
+        _ -> return ann
+    mapM_ getAssumptionType es
+    e <- sequence <$> mapM consistentTypes es
+    annRet <- getAnnotationState (LhsIdentifer "return" pos)
+    put scope
+    case annRet of
+        Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+        Left _ -> return $ AnnotationLiteral "_"
+    let res = case (t, e) of
+            (Right b, Right c) -> Right $ AnnotationLiteral "_"
+            (Left a, _) -> Left a
+            (_, Left a) -> Left a
+    put scope
+    return res
 consistentTypes (IfStmnt cond ts es pos) = do
     scope@(_, (_, mp)) <- get
     c <- consistentTypes cond
@@ -658,10 +722,18 @@ consistentTypes (IfStmnt cond ts es pos) = do
             c <- consistentTypes cond
             mapM_ getAssumptionType ts
             t <- sequence <$> mapM consistentTypes ts
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
             put scope
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
             mapM_ getAssumptionType es
             e <- sequence <$> mapM consistentTypes es
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
             put scope
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
             let res = case (c, t, e) of
                     (Right a, Right b, Right c) -> Right $ AnnotationLiteral "_"
                     (Left a, _, _) -> Left a
@@ -708,14 +780,17 @@ consistentTypes (FunctionDef args ret body pos) =
             new_ans <- gets $ fst . snd
             case xs of
                 Right _ ->
-                    case firstInferrableReturn pos new_ans body of
-                        Right st -> do
-                            ret <- getAssumptionType st
-                            put whole_old_ans
-                            return (makeFunAnnotation args <$> ret)
-                        Left err -> return . Left $ err
+                    (\case
+                        Right ret -> case getAnnotation (LhsIdentifer "return" pos) new_ans of
+                            Right ret' -> do
+                                typ <- consistentTypes ret
+                                let ntyp = if ret' == AnnotationLiteral "_" then typ else sameTypes pos mp ret' =<< typ
+                                put whole_old_ans
+                                return $ makeFunAnnotation args <$> ntyp
+                            Left err -> return $ Left err
+                        Left err -> return $ Left err) =<< firstInferrableReturn pos body
                 Left err -> return $ Left err
-consistentTypes (Return n pos) =  getAnnotationState (LhsIdentifer "return" pos) >>= \case
+consistentTypes (Return n pos) = getAnnotationState (LhsIdentifer "return" pos) >>= \case
     Left _ -> mapRight (consistentTypes n) (fmap Right . insertAnnotation (LhsIdentifer "return" pos))
     Right (AnnotationLiteral "_") -> mapRight (consistentTypes n) (fmap Right . insertAnnotation (LhsIdentifer "return" pos))
     Right a -> (\b mp -> sameTypes pos mp a =<< b) <$> consistentTypes n <*> getTypeMap

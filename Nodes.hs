@@ -25,6 +25,7 @@ data Annotation =
     | OpenFunctionAnnotation [Annotation] Annotation Annotation [Annotation]
     | NewTypeAnnotation String [Annotation] (Map.Map Lhs Annotation)
     | NewTypeInstanceAnnotation String [Annotation]
+    | TypeUnion (Set.Set Annotation)
 
 data AnnotationNoImpl = 
     AnnotationNoImpl String
@@ -35,6 +36,7 @@ data AnnotationNoImpl =
     | OpenFunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl AnnotationNoImpl
     | NewTypeAnnotationNoImpl String [AnnotationNoImpl] (Map.Map Lhs AnnotationNoImpl)
     | NewTypeInstanceAnnotationNoImpl String [AnnotationNoImpl]
+    | TypeUnionNoImpl (Set.Set AnnotationNoImpl)
     deriving (Eq, Ord)
 
 toAnnotationNoImpl :: Annotation -> AnnotationNoImpl
@@ -46,6 +48,7 @@ toAnnotationNoImpl (StructAnnotation map) = StructAnnotationNoImpl (Map.map toAn
 toAnnotationNoImpl (OpenFunctionAnnotation a b c _) = OpenFunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b) (toAnnotationNoImpl c)
 toAnnotationNoImpl (NewTypeAnnotation s a b) = NewTypeAnnotationNoImpl s (map toAnnotationNoImpl a) (Map.map toAnnotationNoImpl b)
 toAnnotationNoImpl (NewTypeInstanceAnnotation a b) = NewTypeInstanceAnnotationNoImpl a (map toAnnotationNoImpl b)
+toAnnotationNoImpl (TypeUnion as) = TypeUnionNoImpl $ Set.map toAnnotationNoImpl as
 
 instance Eq Annotation where a == b = toAnnotationNoImpl a == toAnnotationNoImpl b
 instance Ord Annotation where a `compare` b = toAnnotationNoImpl a `compare` toAnnotationNoImpl b
@@ -61,6 +64,7 @@ instance Show Annotation where
         " in {" ++ intercalate ", " (map show impls) ++ "} for " ++ show for
     show (NewTypeAnnotation n as res) = n ++ "(" ++ intercalate ", " (map show as) ++ ") = " ++ show res
     show (NewTypeInstanceAnnotation n as) = n ++ "(" ++ intercalate ", " (map show as) ++ ")"
+    show (TypeUnion as) = intercalate " | " (map show (Set.toList as))
 
 data LhsNoPos = 
     LhsIdentiferNoPos String 
@@ -169,6 +173,7 @@ data Node =
     | IfStmnt Node [Node] [Node] P.SourcePos
     | IfExpr Node Node Node P.SourcePos
     | CreateNewType Lhs [Node] P.SourcePos
+    | CastNode Lhs Annotation P.SourcePos
     deriving(Show)
 
 data NodeNoPos =
@@ -183,6 +188,7 @@ data NodeNoPos =
     | IfStmntNoPos Node [Node] [Node]
     | IfExprNoPos Node Node Node
     | CreateNewTypeNoPos Lhs [NodeNoPos]
+    | CastNodeNoPos Lhs Annotation
     deriving(Show, Ord, Eq)
 
 toNodeNoPos :: Node -> NodeNoPos
@@ -196,6 +202,7 @@ toNodeNoPos (Access a b _) = AccessNoPos a b
 toNodeNoPos (IfStmnt a b c _) = IfStmntNoPos a b c
 toNodeNoPos (IfExpr a b c _) = IfExprNoPos a b c
 toNodeNoPos (CreateNewType a b _) = CreateNewTypeNoPos a (map toNodeNoPos b)
+toNodeNoPos (CastNode a b _) = CastNodeNoPos a b
 
 instance Eq Node where
     a == b = toNodeNoPos a == toNodeNoPos b

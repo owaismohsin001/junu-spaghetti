@@ -8,7 +8,7 @@ import Text.Megaparsec as P hiding (State)
 import Text.Megaparsec.Char ( string, char, space, numberChar )
 import Debug.Trace ( trace )
 import qualified Text.Megaparsec.Char.Lexer as L
-import Text.Read (readMaybe)
+import Text.Read (readMaybe, Lexeme (Ident))
 import qualified Data.Set as Set
 import Data.Maybe
 import Control.Monad
@@ -46,6 +46,7 @@ data Keyword =
     | Impl
     | For
     | Newtype
+    | Is
     deriving(Show, Eq, Enum)
 
 notKeyword :: Parser ()
@@ -137,6 +138,10 @@ containerFunction strt end sep f p =
 tuple :: ([a] -> SourcePos -> b) -> Parser a -> Parser b
 tuple = Parser.containerFunction "(" ")" ","
 
+binOpGeneralizedOne mod f1 f2 ops ret = lookAhead (
+        f1 *> spaces *> ops *> spaces *> f2
+    ) *> binOpGeneralized mod f1 f2 ops ret
+
 binOpGeneralized mod f1 f2 ops ret = do
   t1 <- f1
   loop t1
@@ -186,13 +191,15 @@ modOp "+" = "add"
 modOp "-" = "sub"
 modOp "/" = "div"
 modOp "*" = "mul"
+modOp "is" = "is"
 
 modUnaryOp :: String -> String
 modUnaryOp "!" = "not"
 modUnaryOp "-" = "neg"
 
 exprParser :: Parser Node
-exprParser = binOp modOp compExprParser (Text.Megaparsec.Char.string "&" <|> Text.Megaparsec.Char.string "|") binCall
+exprParser =  try (binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Is <* spaces) (\(Identifier i ipos) _ b pos -> CastNode (LhsIdentifer i ipos) b pos))
+    <|> binOp modOp compExprParser (Text.Megaparsec.Char.string "&" <|> Text.Megaparsec.Char.string "|") binCall
 
 compExprParser :: Parser Node
 compExprParser = binOp modOp arithExprParser ops binCall where
@@ -255,8 +262,17 @@ constraintParser =
     (AnnotationConstraint <$> annotationParser)
     <|> (ConstraintHas <$> (Text.Megaparsec.Char.string "." *> lhsLittleId) <*> (spaces *> Text.Megaparsec.Char.string ":" *> spaces *> constraintParser))
 
-annotationParser :: Parser Annotation
-annotationParser = 
+annotationParser = binOp id annotationAtomParser (spaces *> Text.Megaparsec.Char.string "|" <* spaces) (
+    \a _ b _ -> 
+        case (a, b) of 
+            (TypeUnion st1, TypeUnion st2) -> TypeUnion $ Set.union st1 st2
+            (TypeUnion st1, b) -> TypeUnion $ Set.insert b st1
+            (b, TypeUnion st1) -> TypeUnion $ Set.insert b st1
+            (a, b) -> TypeUnion $ Set.fromList [a, b]
+    )
+
+annotationAtomParser :: Parser Annotation
+annotationAtomParser = 
     try annId
     <|> try (NewTypeInstanceAnnotation <$> strBigId <*> tuple const annotationParser)
     <|> try ((\(Identifier id _) cs -> GenericAnnotation id cs) <$> littleId <*> containerFunction "{" "}" "," const constraintParser)
