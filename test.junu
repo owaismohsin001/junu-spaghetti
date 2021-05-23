@@ -139,4 +139,8 @@ let ftr = (a: String, b: {name: String} | Pet | Person) => String {
     return b.name + a
 }
 
+let flr = (x: Pet | Person) => {
+    return ftr("", x)
+}
+
 ftr("Hello ", st.pet)

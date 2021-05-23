@@ -277,7 +277,7 @@ specifyInternal pos a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer 
     Just a' -> specifyInternal pos a' b
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
 specifyInternal pos a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
-    Just a -> specifyInternal pos a b
+    Just b' -> specifyInternal pos a b'
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
 specifyInternal pos a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = 
     if and $ zipWith (==) cns1 cns2 then
@@ -306,13 +306,15 @@ specifyInternal pos a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAn
         Right _ -> return $ Right b
         Left err -> return $ Left err
         ) . sequence =<< zipWithM (specifyInternal pos) anns1 anns2
-specifyInternal pos a@(TypeUnion st) b = getFirst $ map (flip (specifyInternal pos) b) stl where 
-    stl = Set.toList st
-
-    getFirst [] = return . Left $ unmatchedType a b pos
-    getFirst (a:xs) = a >>= \case
-        Right a -> return $ Right a
-        Left _ -> getFirst xs
+specifyInternal pos a@(TypeUnion as) b@(TypeUnion bs) = do
+    mp <- getTypeMap
+    xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
+    case xs of
+        Right _ -> return $ Right b
+        Left err -> return $ Left err
+    where
+        f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos x v1) ps2
+specifyInternal pos a@(TypeUnion st) b = getFirst a b pos $ map (flip (specifyInternal pos) b) stl where stl = Set.toList st
 specifyInternal pos a@(GenericAnnotation id cns) b = 
     (\case
         Right _ -> do
@@ -322,6 +324,11 @@ specifyInternal pos a@(GenericAnnotation id cns) b =
                 Left err -> return $ Left err
         Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos b) cns
 specifyInternal pos a b = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
+
+getFirst a b pos [] = return . Left $ unmatchedType a b pos
+getFirst a b pos (x:xs) = x >>= \case
+    Right a -> return $ Right a
+    Left _ -> getFirst a b pos xs
 
 specify :: SourcePos -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Either String (Annotation, TypeRelations)
 specify pos base mp a b = (,rel) <$> ann where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos a b) (a, ((Map.empty, base), mp))
@@ -569,7 +576,7 @@ sameTypesGeneric gs pos mp a@(TypeUnion as) b@(TypeUnion bs)
     | Set.size as /= Set.size bs = Left $ unmatchedType a b pos
     | all (f as) (Set.toList bs) = Right a
     where
-        f ps2 v1 = isJust $ find (sameTypesGenericBool gs pos mp v1) ps2 
+        f ps2 v1 = isJust $ find (sameTypesGenericBool gs pos mp v1) ps2
 sameTypesGeneric gs pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
     | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then Right a else Left $ unmatchedType a b pos
     | Map.size ps1 /= Map.size ps2 = Left $ unmatchedType a b pos
