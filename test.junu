@@ -135,8 +135,12 @@ identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
     return Tup(a, b)
 })))
 
-let ftr = (a: String, b: String | Int) => {
+let ftr = (a: String, b: String | Int | Person) => {
     if b is String {
         return a+b
+    } else if b is Person {
+        return a+b.name
     }
 }
+
+ftr("Hello ", 1)

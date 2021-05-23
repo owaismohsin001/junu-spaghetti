@@ -296,6 +296,13 @@ specifyInternal pos a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAn
         Right _ -> return $ Right b
         Left err -> return $ Left err
         ) . sequence =<< zipWithM (specifyInternal pos) anns1 anns2
+specifyInternal pos a@(TypeUnion st) b = getFirst $ map (flip (specifyInternal pos) b) stl where 
+    stl = Set.toList st
+
+    getFirst [] = return . Left $ unmatchedType a b pos
+    getFirst (a:xs) = a >>= \case
+        Right a -> return $ Right a
+        Left _ -> getFirst xs
 specifyInternal pos a@(GenericAnnotation id cns) b = 
     (\case
         Right _ -> do
