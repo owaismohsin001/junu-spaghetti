@@ -237,12 +237,22 @@ applyConstraintState pos ann (ConstraintHas lhs cn) =
                         (\a -> return . Left $ "Cannot get " ++ show lhs ++ " from type " ++ show a ++ "\n" ++ showPos pos)
                         (LhsIdentifer id pos)
             g@(GenericAnnotation id cns) -> return $ genericHas pos mp lhs cns
+            t@TypeUnion{} -> typeUnionHas pos t cn
             a -> return . Left $ "Can't search for field " ++ show lhs ++ " in " ++ show a ++ "\n" ++ showPos pos
 applyConstraintState pos ann2 (AnnotationConstraint ann1) = do
     a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos ann2 ann1 *> addRelation pos ann1 ann2 $> Right ann1 else addTypeVariable pos ann1 ann2
     case a of
         Right _ -> specifyInternal pos ann1 ann2
         Left err -> return $ Left err
+
+typeUnionHas pos (TypeUnion st) cn = (\case
+                Left err -> return $ Left err
+                Right stl -> do
+                    a <- sequence <$> mapM (flip (applyConstraintState pos) cn) stl
+                    case a of
+                        Right (x:_) -> return $ Right x
+                        Left err -> return $ Left err
+                ) . sequence =<< mapM (flip (applyConstraintState pos) cn) stl where stl = Set.toList st
 
 specifyInternal :: SourcePos
     -> Annotation
@@ -476,17 +486,24 @@ getAssumptionType (StructN (Struct ns _)) =
         mapRight 
             (return . Right $ AnnotationLiteral "_") 
             (const . return . Right . StructAnnotation $ Map.map (\(Right a) -> a) xs)) =<< mapM getAssumptionType ns
-getAssumptionType (Access st p pos) = (\case
-                    Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
-                    Right (NewTypeInstanceAnnotation id anns) -> 
-                        accessNewType anns
-                        (\(NewTypeAnnotation _ _ ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)) 
-                        (\a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos)
-                        (LhsIdentifer id pos)
-                    Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
-                    Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
-                    Left err -> return $ Left err
-                    ) =<< getTypeStateFrom (consistentTypes st) pos
+getAssumptionType (Access st p pos) = do
+    mp <- getTypeMap
+    f mp =<< getTypeStateFrom (consistentTypes st) pos where 
+
+    f :: UserDefinedTypes -> Either String Annotation -> AnnotationState (Either String Annotation)
+    f mp = \case
+            Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
+            Right (TypeUnion st) -> ((\x -> head <$> mapM (sameTypes pos mp (head x)) x) =<<) <$> x where 
+                x = sequence <$> mapM (\x -> f mp =<< getTypeState x pos) stl
+                stl = Set.toList st
+            Right (NewTypeInstanceAnnotation id anns) -> 
+                accessNewType anns
+                (\(NewTypeAnnotation _ _ ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)) 
+                (\a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos)
+                (LhsIdentifer id pos)
+            Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
+            Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
+            Left err -> return $ Left err
 getAssumptionType (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Int"
 getAssumptionType (Lit (LitBool _ _)) = return . Right $ AnnotationLiteral "Bool"
 getAssumptionType (Lit (LitString _ _)) = return . Right $ AnnotationLiteral "String"
@@ -754,16 +771,24 @@ consistentTypes (StructN (Struct ns _)) =
         mapRight 
             (return . Right $ AnnotationLiteral "_") 
             (const . return . Right . StructAnnotation $ Map.map (\(Right a) -> a) xs)) =<< mapM consistentTypes ns
-consistentTypes (Access st p pos) = (\case
-                    Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
-                    Right (NewTypeInstanceAnnotation id args) -> 
-                        accessNewType args
-                        (\(NewTypeAnnotation _ _ ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)) 
-                        (\a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos)
-                        (LhsIdentifer id pos)
-                    Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
-                    Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
-                    Left err -> return $ Left err) =<< getTypeStateFrom (consistentTypes st) pos
+consistentTypes (Access st p pos) = do
+    mp <- getTypeMap
+    f mp =<< getTypeStateFrom (consistentTypes st) pos where 
+    
+    f :: UserDefinedTypes -> Either String Annotation -> AnnotationState (Either String Annotation)
+    f mp = \case
+            Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
+            Right (TypeUnion st) -> ((\x -> head <$> mapM (sameTypes pos mp (head x)) x) =<<) <$> x where 
+                x = sequence <$> mapM (\x -> f mp =<< getTypeState x pos) stl
+                stl = Set.toList st
+            Right (NewTypeInstanceAnnotation id anns) -> 
+                accessNewType anns
+                (\(NewTypeAnnotation _ _ ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)) 
+                (\a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos)
+                (LhsIdentifer id pos)
+            Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
+            Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
+            Left err -> return $ Left err
 consistentTypes (FunctionDef args ret body pos) = 
     case ret of
         Just ret -> do
