@@ -135,12 +135,21 @@ identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
     return Tup(a, b)
 })))
 
-let ftr = (a: String, b: {name: String} | Pet | Person) => String {
+let ftr = (a: String, b: {name: String, species: String} | Pet | Person) => String {
+    if b notis Person {
+        return b.species + " " + b.name
+    } else {
+        return b.pet.species + " " + b.name
+    }
     return b.name + a
 }
 
 let flr = (x: Pet | Person) => {
-    return ftr("", x)
+    if x is Pet {
+        return ftr(x.species, x)
+    } else {
+        return ftr(x.name, x)
+    }
 }
 
-ftr("Hello ", st.pet)
+ftr("Hello ", st)

@@ -47,6 +47,7 @@ data Keyword =
     | For
     | Newtype
     | Is
+    | Notis
     deriving(Show, Eq, Enum)
 
 notKeyword :: Parser ()
@@ -192,13 +193,16 @@ modOp "-" = "sub"
 modOp "/" = "div"
 modOp "*" = "mul"
 modOp "is" = "is"
+modOp "notis" = "notis"
 
 modUnaryOp :: String -> String
 modUnaryOp "!" = "not"
 modUnaryOp "-" = "neg"
 
 exprParser :: Parser Node
-exprParser =  try (binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Is <* spaces) (\(Identifier i ipos) _ b pos -> CastNode (LhsIdentifer i ipos) b pos))
+exprParser =  
+    try (binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Is <* spaces) (\(Identifier i ipos) _ b pos -> CastNode (LhsIdentifer i ipos) b pos))
+    <|> try (binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Notis <* spaces) (\(Identifier i ipos) _ b pos -> RemoveFromUnionNode (LhsIdentifer i ipos) b pos))
     <|> binOp modOp compExprParser (Text.Megaparsec.Char.string "&" <|> Text.Megaparsec.Char.string "|") binCall
 
 compExprParser :: Parser Node

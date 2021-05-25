@@ -147,7 +147,7 @@ reshuffleTypes pos = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeTy
 
 firstPreferablyDefinedRelation pos mp rs k =
     case Map.lookup k rs of
-        Just s -> if Set.null stf then Right $ Set.elemAt 0 s else Right $ Set.elemAt 0 stf where stf = Set.filter (\x -> maybe False (const True) (Map.lookup x mp)) s
+        Just s -> if Set.null stf then Right $ Set.elemAt 0 s else Right $ Set.elemAt 0 stf where stf = Set.filter (\x -> isJust (Map.lookup x mp)) s
         Nothing -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
 
 addTypeVariableGeneralized pos stmnt k v =  do
@@ -363,6 +363,8 @@ isGenericAnnotation a = case a of
     a@GenericAnnotation{} -> True
     _ -> False
 
+expectedUnion pos lhs ann = "Expected a type union, got type " ++ show ann ++ " from " ++ show lhs ++ "\n" ++ showPos pos
+
 getAssumptionType :: Node -> AnnotationState (Result String Annotation)
 getAssumptionType (DeclN (Decl lhs n a _)) = case a of 
     Just a -> Right <$> insertAnnotation lhs a
@@ -430,6 +432,11 @@ getAssumptionType (DeclN (Assign (LhsAccess access prop accPos) expr pos)) =
     getTypeStateFrom (getAssumptionType (Access access prop accPos)) pos
 getAssumptionType (DeclN (Assign lhs n _)) = mapRight (getAssumptionType n) (fmap Right . insertAnnotation lhs)
 getAssumptionType (CastNode lhs ann _) = Right <$> (insertAnnotation lhs ann $> AnnotationLiteral "Bool")
+getAssumptionType (RemoveFromUnionNode lhs ann pos) =
+    (\case
+        Right a@TypeUnion{} -> (return . Right $ AnnotationLiteral "Bool") <$ insertAnnotation lhs =<< excludeFromUnion pos ann a
+        Right a -> return . Left $ expectedUnion pos lhs ann
+        Left err -> return $ Left err) =<< getAnnotationState lhs
 getAssumptionType (DeclN (Expr n)) = getAssumptionType n
 getAssumptionType (Return n pos) = getAssumptionType n
 getAssumptionType (IfStmnt cond ts es pos) = return . Right $ AnnotationLiteral "_"
@@ -718,6 +725,35 @@ consistentTypes (CreateNewType lhs args pos) = do
                 else Left $ "Can't match arguments " ++ show as ++ " with " ++ show anns
         Left err -> return $ Left err
 consistentTypes (DeclN (Expr n)) = consistentTypes n
+consistentTypes (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
+    scope@(_, (_, mp)) <- get
+    typLhs <- getAnnotationState lhs
+    case typLhs of
+        Right union@TypeUnion{} ->  do
+            insertAnnotation lhs =<< excludeFromUnion pos ann union
+            mapM_ getAssumptionType ts
+            t <- sequence <$> mapM consistentTypes ts
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
+            put scope
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
+            insertAnnotation lhs ann
+            mapM_ getAssumptionType es
+            e <- sequence <$> mapM consistentTypes es
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
+            put scope
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
+            let res = case (t, e) of
+                    (Right b, Right c) -> Right $ AnnotationLiteral "_"
+                    (Left a, _) -> Left a
+                    (_, Left a) -> Left a
+            put scope
+            return res
+        _ -> return . Left $ expectedUnion pos lhs typLhs
+
 consistentTypes (IfStmnt (CastNode lhs ann _) ts es pos) = do
     scope@(_, (_, mp)) <- get
     insertAnnotation lhs ann
