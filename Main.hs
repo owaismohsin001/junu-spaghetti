@@ -365,6 +365,17 @@ isGenericAnnotation a = case a of
 
 expectedUnion pos lhs ann = "Expected a type union, got type " ++ show ann ++ " from " ++ show lhs ++ "\n" ++ showPos pos
 
+fNode f x = head $ f [x]
+
+earlyReturnToElse :: [Node] -> [Node]
+earlyReturnToElse [] = []
+earlyReturnToElse (IfStmnt c ts [] pos:xs) = [IfStmnt c (earlyReturnToElse ts) (earlyReturnToElse xs) pos]
+earlyReturnToElse (IfStmnt c ts es pos:xs) = IfStmnt c (earlyReturnToElse ts) (earlyReturnToElse es) pos : earlyReturnToElse xs
+earlyReturnToElse (FunctionDef args ret ns pos:xs) = FunctionDef args ret (earlyReturnToElse ns) pos : earlyReturnToElse xs
+earlyReturnToElse (DeclN (Decl lhs n ann pos):xs) = DeclN (Decl lhs (fNode earlyReturnToElse n) ann pos) : earlyReturnToElse xs
+earlyReturnToElse (DeclN (Assign lhs n pos):xs) = DeclN (Assign lhs (fNode earlyReturnToElse n) pos) : earlyReturnToElse xs
+earlyReturnToElse (x:xs) = x : earlyReturnToElse xs
+
 getAssumptionType :: Node -> AnnotationState (Result String Annotation)
 getAssumptionType (DeclN (Decl lhs n a _)) = case a of 
     Just a -> Right <$> insertAnnotation lhs a
@@ -950,7 +961,7 @@ tests program =
         case runState (mapM getAssumptionType restProgram) (AnnotationLiteral "_", (assumeProgram (Program restProgram) types, types)) of
             (res, (a, map)) -> case sequence_ res of
                 Left err -> Left err 
-                Right err -> sequence (evalState (mapM consistentTypes restProgram) (a, map))
+                Right err -> sequence (evalState (mapM consistentTypes (earlyReturnToElse restProgram)) (a, map))
     where 
         (metProgram, restProgram) = typeNodes program
         typesPos = typeMap metProgram
