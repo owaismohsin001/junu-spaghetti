@@ -620,6 +620,16 @@ sameTypesGeneric gs pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
                         Right _ -> True
                         Left err -> False
                 Nothing -> False
+sameTypesGeneric gs pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
+    case mapM_ (f mp $ Set.toList as) (Set.toList bs) of
+        Right _ -> Right b
+        Left err -> Left err
+    where
+        f mp ps2 v1 = join $ getFirst a b pos $ map (\x -> Right <$> sameTypesGeneric gs pos mp x v1) ps2
+sameTypesGeneric gs pos mp a@(TypeUnion st) b = 
+    fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGeneric gs pos mp x b) $ Set.toList st
+sameTypesGeneric gs pos mp b a@(TypeUnion st) = 
+    fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGeneric gs pos mp x b) $ Set.toList st
 sameTypesGeneric gs pos mp (Annotation id1) b@(Annotation id2)
     | id1 == id2 = Right b
     | otherwise = case Map.lookup (LhsIdentifer id1 pos) mp of
