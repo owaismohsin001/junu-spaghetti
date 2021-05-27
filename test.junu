@@ -1,8 +1,8 @@
 type Pet = {species: String, name: String, color: String}
 type Moo = {name: String, age: Int, male: Bool, pet: Pet}
-type Person = {name: String, age: Int, male: Bool, pet: Pet}
+type Person = {name: String, age: Int, male: Bool, pet: Pet, parent: Nil | Person}
 type Date = {month: Int, weekday: Int, year: Int}
-type C = {}
+type Nil = {}
 newtype Tup(a{}, b{}) = {a: a{}, b: b{}}
 
 let s = Tup(1, true)
@@ -72,7 +72,7 @@ let modifyAge = (person: Person, age: Int) => {
     return age
 }
 
-let st = {name: "Ameer", age: 10, male: true, pet: {species: "Cat", name: "Tom", color: "White"}}
+let st = {name: "Ameer", age: 10, male: true, pet: {species: "Cat", name: "Tom", color: "White"}, parent: {}}
 changeCatName(st, "Molly")
 modifyAge(st, st.age + 1)
 

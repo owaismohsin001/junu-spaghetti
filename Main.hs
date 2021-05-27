@@ -273,9 +273,16 @@ specifyInternal pos a@(GenericAnnotation id cns) b@(Annotation ann) = do
     case anno of
         Right ann -> specifyInternal pos a ann
         Left err -> return $ Left err
+specifyInternal pos a@(Annotation id1) b@(Annotation id2) 
+    | id1 == id2 = return $ Right b
+    | otherwise = (\mp -> case Map.lookup (LhsIdentifer id1 pos) mp of 
+        Just a' -> case Map.lookup (LhsIdentifer id2 pos) mp of
+            Just b' -> specifyInternal pos a' b'
+            Nothing -> undefined
+        Nothing -> return $ Left $ noTypeFound id1 pos) =<< getTypeMap
 specifyInternal pos a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
-    Just a' -> specifyInternal pos a' b
-    Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
+        Just a' -> specifyInternal pos a' b
+        Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
 specifyInternal pos a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
     Just b' -> specifyInternal pos a b'
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
@@ -369,7 +376,12 @@ fNode f x = head $ f [x]
 
 earlyReturnToElse :: [Node] -> [Node]
 earlyReturnToElse [] = []
-earlyReturnToElse (IfStmnt c ts [] pos:xs) = [IfStmnt c (earlyReturnToElse ts) (earlyReturnToElse xs) pos]
+earlyReturnToElse (IfStmnt c ts [] pos:xs) = 
+    if isReturn $ last ts then [IfStmnt c (earlyReturnToElse ts) (earlyReturnToElse xs) pos]
+    else IfStmnt c (earlyReturnToElse ts) [] pos : earlyReturnToElse xs
+    where 
+        isReturn a@Return{} = True
+        isReturn _ = False
 earlyReturnToElse (IfStmnt c ts es pos:xs) = IfStmnt c (earlyReturnToElse ts) (earlyReturnToElse es) pos : earlyReturnToElse xs
 earlyReturnToElse (FunctionDef args ret ns pos:xs) = FunctionDef args ret (earlyReturnToElse ns) pos : earlyReturnToElse xs
 earlyReturnToElse (DeclN (Decl lhs n ann pos):xs) = DeclN (Decl lhs (fNode earlyReturnToElse n) ann pos) : earlyReturnToElse xs
@@ -608,8 +620,9 @@ sameTypesGeneric gs pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
                         Right _ -> True
                         Left err -> False
                 Nothing -> False
-sameTypesGeneric gs pos mp (Annotation id1) (Annotation id2) = 
-    case Map.lookup (LhsIdentifer id1 pos) mp of
+sameTypesGeneric gs pos mp (Annotation id1) b@(Annotation id2)
+    | id1 == id2 = Right b
+    | otherwise = case Map.lookup (LhsIdentifer id1 pos) mp of
         Just a -> case Map.lookup (LhsIdentifer id2 pos) mp of
             Just b -> sameTypesGeneric gs pos mp a b
             Nothing -> Left $ noTypeFound id2 pos
@@ -950,6 +963,7 @@ allExists mp = mapM_ (exists mp) mp where
             Nothing -> Left $ noTypeFound id pos
     exists mp (AnnotationLiteral lit, pos) = Right ()
     exists mp (FunctionAnnotation as ret, pos) = mapM_ (exists mp . (, pos)) as >> exists mp (ret, pos)
+    exists mp (TypeUnion s, pos) = mapM_ (\x -> exists mp (x, pos)) (Set.toList s)
     exists mp (StructAnnotation xs, pos) = mapM_ (exists mp . (, pos)) (Map.elems xs)
     exists mp (GenericAnnotation _ cns, pos) = mapM_ (constraintExists mp . (, pos)) cns where 
         constraintExists mp (ConstraintHas _ cn, pos) = constraintExists mp (cn, pos)
