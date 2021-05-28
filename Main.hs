@@ -598,31 +598,36 @@ sameTypesGeneric :: (Bool, Map.Map String [Constraint]) -> P.SourcePos -> UserDe
 sameTypesGeneric _ pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
     if a == b then Right a else Left $ unmatchedType a b pos
 sameTypesGeneric gs pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
-    if length as == length bs then a <$ zipWithM (sameTypesGeneric gs pos mp) (as ++ [ret1]) (bs ++ [ret2])
+    if length as == length bs then (\xs -> FunctionAnnotation (init xs) (last xs)) <$> ls
     else Left $ unmatchedType a b pos
+    where ls = zipWithM (sameTypesGeneric gs pos mp) (as ++ [ret1]) (bs ++ [ret2])
 sameTypesGeneric gs pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
-    | e1 == e2 && length as1 == length as2 = zipWithM (sameTypesGeneric gs pos mp) as1 as2 *> Right b
+    | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 <$> ls
+    | otherwise = Left $ unmatchedType a b pos 
+    where ls = zipWithM (sameTypesGeneric gs pos mp) as1 as2
 sameTypesGeneric gs pos mp a@(TypeUnion as) b@(TypeUnion bs)
     | Set.size as /= Set.size bs = Left $ unmatchedType a b pos
-    | all (f as) (Set.toList bs) = Right a
+    | isJust ls = maybe (Left $ unmatchedType a b pos) Right (TypeUnion . Set.fromList <$> ls)
     where
-        f ps2 v1 = isJust $ find (sameTypesGenericBool gs pos mp v1) ps2
+        ls = mapM (f as) (Set.toList bs)
+        f ps2 v1 = find (sameTypesGenericBool gs pos mp v1) ps2
 sameTypesGeneric gs pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
     | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then Right a else Left $ unmatchedType a b pos
     | Map.size ps1 /= Map.size ps2 = Left $ unmatchedType a b pos
-    | Map.foldr (&&) True (Map.mapWithKey (f ps1) ps2) = Right a
+    | isJust $ sequence ls = maybe (Left $ unmatchedType a b pos) Right (StructAnnotation <$> (sequence ls))
     | otherwise = Left $ unmatchedType a b pos
     where
+        ls = Map.mapWithKey (f ps1) ps2
         f ps2 k v1 = 
             case Map.lookup k ps2 of
                 Just v2
                     -> case sameTypesGeneric gs pos mp v1 v2 of
-                        Right _ -> True
-                        Left err -> False
-                Nothing -> False
+                        Right a -> Just a
+                        Left err -> Nothing
+                Nothing -> Nothing
 sameTypesGeneric gs pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
-    case mapM_ (f mp $ Set.toList as) (Set.toList bs) of
-        Right _ -> Right b
+    case mapM (f mp $ Set.toList as) (Set.toList bs) of
+        Right s -> Right $ TypeUnion $ Set.fromList s
         Left err -> Left err
     where
         f mp ps2 v1 = join $ getFirst a b pos $ map (\x -> Right <$> sameTypesGeneric gs pos mp x v1) ps2
@@ -656,11 +661,13 @@ sameTypesGeneric tgs@(sensitive, gs) pos mp b a@(GenericAnnotation _ acs) =
     if sensitive then 
         mapM (matchConstraint tgs pos mp (AnnotationConstraint b)) acs *> Right a
     else Left $ unmatchedType a b pos
-sameTypesGeneric (sensitive, gs) pos mp ft@(OpenFunctionAnnotation anns1 ret1 _ _) (OpenFunctionAnnotation anns2 ret2 _ _) =
-    zipWithM (sameTypesGeneric (sensitive, gs') pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2]) *> Right ft where 
+sameTypesGeneric (sensitive, gs) pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
+    (\xs -> OpenFunctionAnnotation (init xs) (last xs) forType impls) <$> ls where 
+        ls = zipWithM (sameTypesGeneric (sensitive, gs') pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs 
 sameTypesGeneric (sensitive, gs) pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
-    zipWithM (sameTypesGeneric (sensitive, gs') pos mp) (anns1 ++ [ret1]) (args ++ [ret2]) *> Right a where
+    (\xs -> FunctionAnnotation (init xs) (last xs)) <$> ls where
+        ls = zipWithM (sameTypesGeneric (sensitive, gs') pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
 sameTypesGeneric _ pos _ a b = Left $ unmatchedType a b pos
 
