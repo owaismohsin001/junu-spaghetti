@@ -227,6 +227,12 @@ type SubstituteState = State (Annotation, ((TypeRelations, Map.Map Annotation An
 newtype GenericPolicy = GenericPolicy{specifyGenericsAllowed :: Bool}
 
 type Result = Either
+data ComparisionReturns a b = 
+    ComparisionReturns {
+        success :: b -> Either a b, 
+        failiure :: a -> Either a b,
+        failout :: b -> b -> P.SourcePos -> Either a b
+    }
 
 openMethodGp :: GenericPolicy
 openMethodGp = GenericPolicy{specifyGenericsAllowed = False}
