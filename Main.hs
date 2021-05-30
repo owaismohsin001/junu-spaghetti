@@ -515,7 +515,85 @@ getAssumptionType (RemoveFromUnionNode lhs ann pos) =
         Left err -> return $ Left err) =<< getAnnotationState lhs
 getAssumptionType (DeclN (Expr n)) = getAssumptionType n
 getAssumptionType (Return n pos) = getAssumptionType n
-getAssumptionType (IfStmnt cond ts es pos) = return . Right $ AnnotationLiteral "_"
+getAssumptionType (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
+    (_, (_, mp)) <- get
+    pushScope
+    typLhs <- getAnnotationState lhs
+    case typLhs of
+        Right union@TypeUnion{} ->  do
+            insertAnnotation lhs =<< excludeFromUnion pos ann union
+            t <- sequence <$> mapM getAssumptionType ts
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
+            popScope
+            pushScope
+            insertAnnotation lhs ann
+            e <- sequence <$> mapM getAssumptionType es
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
+            popScope
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
+            let res = case (t, e) of
+                    (Right b, Right c) -> Right $ AnnotationLiteral "_"
+                    (Left a, _) -> Left a
+                    (_, Left a) -> Left a
+            return res
+        _ -> return . Left $ expectedUnion pos lhs typLhs
+getAssumptionType (IfStmnt (CastNode lhs ann _) ts es pos) = do
+    (_, (_, mp)) <- get
+    pushScope
+    insertAnnotation lhs ann
+    t <- sequence <$> mapM getAssumptionType ts
+    annRet <- getAnnotationState (LhsIdentifer "return" pos)
+    popScope
+    pushScope
+    case annRet of
+        Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+        Left _ -> return $ AnnotationLiteral "_"
+    typLhs <- getAnnotationState lhs
+    case typLhs of
+        Right ts@TypeUnion{} -> insertAnnotation lhs =<< excludeFromUnion pos ann ts
+        _ -> return ann
+    e <- sequence <$> mapM getAssumptionType es
+    annRet <- getAnnotationState (LhsIdentifer "return" pos)
+    popScope
+    case annRet of
+        Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+        Left _ -> return $ AnnotationLiteral "_"
+    let res = case (t, e) of
+            (Right b, Right c) -> Right $ AnnotationLiteral "_"
+            (Left a, _) -> Left a
+            (_, Left a) -> Left a
+    return res
+getAssumptionType (IfStmnt cond ts es pos) = do
+    (_, (_, mp)) <- get
+    c <- consistentTypes cond
+    case sameTypes pos mp (AnnotationLiteral "Bool") <$> c of
+        Right _ -> do
+            pushScope
+            t <- sequence <$> mapM getAssumptionType ts
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
+            popScope
+            pushScope
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
+            e <- sequence <$> mapM getAssumptionType es
+            annRet <- getAnnotationState (LhsIdentifer "return" pos)
+            popScope
+            case annRet of
+                Right annRet -> insertAnnotation (LhsIdentifer "return" pos) annRet
+                Left _ -> return $ AnnotationLiteral "_"
+            let res = case (c, t, e) of
+                    (Right a, Right b, Right c) -> Right $ AnnotationLiteral "_"
+                    (Left a, _, _) -> Left a
+                    (_, Left a, _) -> Left a
+                    (_, _, Left a) -> Left a
+            return res
+        Left err -> return $ Left err
 getAssumptionType (IfExpr c t e _) = getAssumptionType t
 getAssumptionType (FunctionDef args ret body pos) = 
     case ret of
@@ -1035,26 +1113,26 @@ consistentTypes (Access st p pos) = do
 consistentTypes (FunctionDef args ret body pos) = 
     case ret of
         Just ret -> do
-            (a, (ans, mp)) <- get
+            scope@(a, (ans, mp)) <- get
             map <- getTypeMap
             let program = Program body
             let ans' = (a, (assumeProgramMapping program (Annotations (Map.fromList $ (LhsIdentifer "return" pos, ret):args) (Just ans)) mp, mp))
             put ans'
             xs <- sequence <$> mapM consistentTypes body
             s <- getAnnotationState (LhsIdentifer "return" pos)
-            popScope
+            put scope
             case s of
                 Right ret' -> case xs of
                     Right _ -> return $ sameTypes pos map (makeFunAnnotation args ret) (makeFunAnnotation args ret')
                     Left err -> return . Left $ err
                 Left err -> return $ Left err
         Nothing -> do
-            (a, (old_ans, mp)) <- get
+            scope@(a, (old_ans, mp)) <- get
             let program = Program body
             let ans = (a, (assumeProgramMapping program (Annotations (Map.fromList $ (LhsIdentifer "return" pos, AnnotationLiteral "_"):args) (Just old_ans)) mp, mp))
             put ans
             xs <- sequence <$> mapM consistentTypes body
-            scope@(_, (new_ans, _)) <- get
+            (_, (new_ans, _)) <- get
             case xs of
                 Right _ ->
                     (\case
@@ -1063,7 +1141,6 @@ consistentTypes (FunctionDef args ret body pos) =
                                 typ <- consistentTypes ret
                                 let ntyp = if ret' == AnnotationLiteral "_" then typ else sameTypes pos mp ret' =<< typ
                                 put scope
-                                popScope
                                 return $ makeFunAnnotation args <$> ntyp
                             Left err -> return $ Left err
                         Left err -> return $ Left err) =<< firstInferrableReturn pos body
