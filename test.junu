@@ -8,7 +8,7 @@ newtype Tup(a{}, b{}) = {a: a{}, b: b{}}
 let s = Tup(1, true)
 let x = s.a
 
-let b: Bool = s.b
+let b = s.b
 
 x = 4
 let i = 0
@@ -73,8 +73,8 @@ let modifyAge = (person: Person, age: Int) => {
 }
 
 let st = {name: "Ameer", age: 10, male: true, pet: {species: "Cat", name: "Tom", color: "White"}, parent: {}}
-changeCatName(st, "Molly")
-modifyAge(st, st.age + 1)
+let nm1 = changeCatName(st, "Molly")
+let ag1 = modifyAge(st, st.age + 1)
 
 open setName(t{}, String, a{.pet: b{.name: t{}}}) => b{.name: t{}} for a{.pet: b{.name: t{}}}
 
@@ -101,7 +101,7 @@ impl fi(i: Int) => {
     return (i: Int) => {return i}
 } for Int
 
-fi(1)
+let fires = fi(1)
 
 let fn = (c: st{.n: t{}, .a: Int}, a: t{}) => {
     c.n = a
@@ -119,7 +119,7 @@ let swapML = (ml: x{.a: a{}, .b: b{}}) => {
 fn({n: {month: 2, weekday: 5, year: 1999}, a: 1}, {month: 3, weekday: 5, year: 1999})
 let btool = fn({n: false, a: 4, x: "Hello"}, true)
 
-swapML(Tup(st, st.pet))
+let mlres = swapML(Tup(st, st.pet))
 
 let identity = (a: x{}) => { return a }
 
@@ -129,9 +129,9 @@ impl fst(s: Tup(a{}, b{})) => {
     return identity(s.a)
 } for Tup(a{}, b{})
 
-fst(swapML(s))
+let tres = fst(swapML(s))
 
-identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
+let idres = identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
     return Tup(a, b)
 })))
 
@@ -151,4 +151,4 @@ let flr = (x: Pet | Person) => {
     return ftr(x.species, x)
 }
 
-ftr("Hello ", st)
+b = ftr("Hello ", st)

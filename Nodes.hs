@@ -215,7 +215,10 @@ instance Ord Node where
 
 newtype Program = Program [Node] deriving (Show)
 
-data Annotations = Annotations (Map.Map Lhs Annotation) (Maybe Annotations) deriving (Show)
+data Annotations = Annotations (Map.Map Lhs Annotation) (Maybe Annotations)
+
+instance Show Annotations where
+    show (Annotations mp res) = (intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp) -- ++ " -> " ++ show res
 
 type UserDefinedTypes = Map.Map Lhs Annotation
 
