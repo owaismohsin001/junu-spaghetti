@@ -317,6 +317,13 @@ specifyInternal pos a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2
     if and $ zipWith (==) cns1 cns2 then
         addRelation pos b a *> addRelation pos a b $> Right b
     else undefined
+specifyInternal pos a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
+        Right _ -> do
+            a <- addTypeVariable pos a b
+            case a of
+                Right _ -> return $ Right b
+                Left err -> return $ Left err
+        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos b) cns
 specifyInternal pos a@(StructAnnotation ms1) b@(StructAnnotation ms2)
     | Map.size ms1 /= Map.size ms2 = return . Left $ unmatchedType a b pos
     | Set.fromList (Map.keys ms1) == Set.fromList (Map.keys ms2) = (\case
