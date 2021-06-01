@@ -215,7 +215,7 @@ instance Ord Node where
 
 newtype Program = Program [Node] deriving (Show)
 
-data Annotations = Annotations (Map.Map Lhs Annotation) (Maybe Annotations)
+data Annotations = Annotations (Map.Map Lhs (Finalizeable Annotation)) (Maybe Annotations)
 
 instance Show Annotations where
     show (Annotations mp res) = (intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp) -- ++ " -> " ++ show res
@@ -223,6 +223,22 @@ instance Show Annotations where
 type UserDefinedTypes = Map.Map Lhs Annotation
 
 type AnnotationState = State (Annotation, (Annotations, UserDefinedTypes))
+
+data Finalizeable a = Finalizeable Bool a
+
+showWhole (Finalizeable b x) = "Finzalizeable " ++ show b ++ " " ++ show x 
+
+instance Show a => Show (Finalizeable a) where
+    show (Finalizeable _ a) = show a
+
+fromFinalizeable :: Finalizeable a -> a
+fromFinalizeable (Finalizeable _ a) = a
+
+flipFinalizeable :: Finalizeable a -> Finalizeable a
+flipFinalizeable (Finalizeable b a) = Finalizeable (not b) a
+
+finalize :: Finalizeable a -> Finalizeable a
+finalize (Finalizeable _ a) = Finalizeable True a
 
 type TypeRelations = Map.Map Annotation (Set.Set Annotation)
 type SubstituteState = State (Annotation, ((TypeRelations, Map.Map Annotation Annotation), UserDefinedTypes))
