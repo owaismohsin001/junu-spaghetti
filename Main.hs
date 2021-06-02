@@ -191,7 +191,7 @@ addTypeVariableGeneralized pos stmnt k v =  do
     case Map.lookup k mp of
         Nothing -> addToMap a rs mp usts k v
         Just a -> do
-            case sameTypes pos usts a v of
+            case sameTypesNoUnionSpec pos usts a v of
                 Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
                     case Map.lookup k rs of
                         Just st -> if Set.member v st then addToMap a rs mp usts k v else return $ Left err
@@ -203,6 +203,11 @@ addTypeVariableGeneralized pos stmnt k v =  do
                 stmnt
                 reshuffleTypes pos
                 return $ Right v
+            
+            sameTypesNoUnionSpec pos usts a@TypeUnion{} b@TypeUnion{} = sameTypes pos usts a b
+            sameTypesNoUnionSpec pos usts a b@TypeUnion{} = Left $ unmatchedType a b pos
+            sameTypesNoUnionSpec pos usts a@TypeUnion{} b = Left $ unmatchedType a b pos
+            sameTypesNoUnionSpec pos usts a b = sameTypes pos usts a b
 
 addTypeVariable :: SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
 addTypeVariable pos = addTypeVariableGeneralized pos (updateRelations pos)
