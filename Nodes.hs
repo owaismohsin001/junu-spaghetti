@@ -175,7 +175,9 @@ data Node =
     | CreateNewType Lhs [Node] P.SourcePos
     | CastNode Lhs Annotation P.SourcePos
     | RemoveFromUnionNode Lhs Annotation P.SourcePos 
-    deriving(Show)
+
+instance Show Node where
+    show = show . toNodeNoPos
 
 data NodeNoPos =
     DeclNNoPos Decl
@@ -213,7 +215,10 @@ instance Eq Node where
 instance Ord Node where
     a `compare` b = toNodeNoPos a `compare` toNodeNoPos b
 
-newtype Program = Program [Node] deriving (Show)
+newtype Program = Program [Node]
+
+instance Show Program where
+    show (Program ns) = intercalate "\n" $ map show ns
 
 data Annotations = Annotations (Map.Map Lhs (Finalizeable Annotation)) (Maybe Annotations)
 

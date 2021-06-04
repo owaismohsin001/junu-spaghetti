@@ -144,13 +144,13 @@ let ftr = (a: String, b: {name: String, species: String} | Pet | Person) => Stri
     return b.name + a
 }
 
-let flr = (x: Pet | Person) => String {
+let flr = (x: Pet | Person) => {
     if x is Person {
         return ftr(x.name, x)
     }
     return ftr(x.species, x)
 }
 
-if b == 1 {
+if b is Bool {
     b = ftr("Hello ", st)
 }
