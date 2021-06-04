@@ -151,6 +151,6 @@ let flr = (x: Pet | Person) => {
     return ftr(x.species, x)
 }
 
-if b is Bool {
+if b == 1 {
     b = ftr("Hello ", st)
 }
