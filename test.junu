@@ -146,11 +146,11 @@ let ftr = (a: String, b: {name: String, species: String} | Pet | Person) => Stri
 
 let flr = (x: Pet | Person) => {
     if x is Person {
-        return ftr(x.name, x)
+        return 1
     }
     return ftr(x.species, x)
 }
 
-if b == 1 {
-    b = ftr("Hello ", st)
+if x is Int {
+    b = if x < 10 then ftr("Hello ", st) else false
 }

@@ -208,6 +208,7 @@ toNodeNoPos (IfExpr a b c _) = IfExprNoPos a b c
 toNodeNoPos (CreateNewType a b _) = CreateNewTypeNoPos a (map toNodeNoPos b)
 toNodeNoPos (CastNode a b _) = CastNodeNoPos a b
 toNodeNoPos (RemoveFromUnionNode a b _) =  RemoveFromUnionNodeNoPos a b
+-- toNodeNoPos e = error $ show e
 
 instance Eq Node where
     a == b = toNodeNoPos a == toNodeNoPos b
