@@ -439,6 +439,13 @@ earlyReturnToElse (DeclN (Decl lhs n ann pos):xs) = DeclN (Decl lhs (fNode early
 earlyReturnToElse (DeclN (Assign lhs n pos):xs) = DeclN (Assign lhs (fNode earlyReturnToElse n) pos) : earlyReturnToElse xs
 earlyReturnToElse (x:xs) = x : earlyReturnToElse xs
 
+initIdentLhs (LhsAccess acc p pos) = LhsIdentifer id pos where (Identifier id pos) = initIdent $ Access acc p pos
+
+initIdent (Access id@Identifier{} _ _) = id
+initIdent (Access x _ _) = initIdent x
+
+trimAccess (Access (Access id p pos) _ _) = Access id p pos
+
 makeUnionIfNotSame pos a clhs lhs = do
     case a of
         Right a -> join $ (\b m -> 
@@ -457,12 +464,49 @@ makeUnionIfNotSame pos a clhs lhs = do
                 Right b -> modifyAnnotationState lhs $ mergedTypeConcrete pos m a b
                 Left err -> return $ Left err
 
+modifyWhole :: [Lhs] -> Annotation -> Annotation -> AnnotationState Annotation
+modifyWhole (p:xs) whole@(StructAnnotation ps) given = case Map.lookup p ps of
+    Just a -> modifyWhole xs a given >>= \x -> return . StructAnnotation $ Map.insert p x ps
+    Nothing -> error $ "You should already know that " ++ show p ++  " is in " ++ show ps ++ " before comming here"
+modifyWhole [] _ given = return given
+
+listAccess n = reverse $ go n where
+    go (Access n lhs _) = lhs : listAccess n
+    go Identifier{} = []
+
 getAssumptionType :: Node -> AnnotationState (Result String Annotation)
 getAssumptionType (DeclN (Decl lhs n a _)) = case a of 
     Just a -> Right <$> insertAnnotation lhs (Finalizeable True a)
     Nothing -> mapRight (getAssumptionType n) (fmap Right . insertAnnotation lhs . Finalizeable False)
-getAssumptionType (DeclN (Assign (LhsAccess access prop accPos) expr pos)) = 
-    getTypeStateFrom (getAssumptionType (Access access prop accPos)) pos
+getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) = 
+    do
+        expcd <- getAssumptionType (Access access p accPos)
+        rhs <- getAssumptionType expr
+        full <- getAnnotationState $ initIdentLhs lhs
+        mp <- getTypeMap
+        case (full, expcd, rhs) of
+            (Right whole, Right expcd, Right rhs) ->
+                case sameTypes pos mp expcd rhs of
+                    Right a -> return $ Right a
+                    Left _ -> do
+                        x <- f mp pos (Access access p accPos) whole expcd rhs
+                        case x of
+                            Right x -> modifyAnnotationState (initIdentLhs lhs) x
+                            Left err -> return $ Left err
+            (Left err, _, _) -> return $ Left err
+            (_, Left err, _) -> return $ Left err
+            (_, _, Left err) -> return $ Left err
+    where
+
+    f :: UserDefinedTypes -> P.SourcePos -> Node -> Annotation -> Annotation -> Annotation -> AnnotationState (Either String Annotation)
+    f mp pos acc whole expected given = case whole of
+            g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
+            TypeUnion{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
+            NewTypeInstanceAnnotation{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
+            StructAnnotation ps -> case sameTypes pos mp expected given of 
+                Right a -> return $ Right a
+                Left err -> Right <$> modifyWhole (listAccess acc) whole (mergedTypeConcrete pos mp expected given)
+            a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
 getAssumptionType (DeclN (Assign lhs n pos)) = getAssumptionType n >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
 getAssumptionType (DeclN (FunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs (Finalizeable False ann)
 getAssumptionType (CreateNewType lhs args pos) = do

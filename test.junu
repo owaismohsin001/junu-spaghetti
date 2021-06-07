@@ -73,6 +73,8 @@ let modifyAge = (person: Person, age: Int) => {
 }
 
 let st = {name: "Ameer", age: 10, male: true, pet: {species: "Cat", name: "Tom", color: "White"}, parent: {}}
+st.parent = st
+
 let nm1 = changeCatName(st, "Molly")
 let ag1 = modifyAge(st, st.age + 1)
 
