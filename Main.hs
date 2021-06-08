@@ -482,11 +482,11 @@ getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) =
     do
         expcd <- getAssumptionType (Access access p accPos)
         rhs <- getAssumptionType expr
-        full <- getAnnotationState $ initIdentLhs lhs
+        full <- getTypeStateFrom (getAnnotationState $ initIdentLhs lhs) pos
         mp <- getTypeMap
         case (full, expcd, rhs) of
             (Right whole, Right expcd, Right rhs) ->
-                case sameTypes pos mp expcd rhs of
+                case sameTypesNoUnionSpec pos mp expcd rhs of
                     Right a -> return $ Right a
                     Left _ -> do
                         x <- f mp pos (Access access p accPos) whole expcd rhs
@@ -503,7 +503,7 @@ getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) =
             g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
             TypeUnion{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
             NewTypeInstanceAnnotation{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
-            StructAnnotation ps -> case sameTypes pos mp expected given of 
+            StructAnnotation ps -> case sameTypesNoUnionSpec pos mp expected given of 
                 Right a -> return $ Right a
                 Left err -> Right <$> modifyWhole (listAccess acc) whole (mergedTypeConcrete pos mp expected given)
             a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
