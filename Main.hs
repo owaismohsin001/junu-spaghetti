@@ -5,6 +5,7 @@ module Main where
 import qualified Data.Map as Map
 import Control.Monad
 import Data.List
+import Data.Either
 import Data.Bifunctor
 import Debug.Trace ( trace )
 import Control.Monad.State
@@ -453,7 +454,7 @@ makeUnionIfNotSame pos a clhs lhs = do
                 Left err -> return $ Left err
                 Right (AnnotationLiteral "_") -> modifyAnnotationState lhs a
                 Right b ->
-                    case sameTypesNoUnionSpec pos m a b of
+                    case sameTypesImpl b pos m a b of
                         Left _ -> f a m (Right b)
                         Right _ -> return $ Right a
                 
@@ -474,6 +475,12 @@ listAccess n = reverse $ go n where
     go (Access n lhs _) = lhs : listAccess n
     go Identifier{} = []
 
+sameTypesImpl TypeUnion{} = sameTypesNoUnionSpec
+sameTypesImpl _ = sameTypes
+
+matchingUserDefinedType :: P.SourcePos -> UserDefinedTypes -> Annotation -> Maybe Annotation
+matchingUserDefinedType pos usts t = (\(LhsIdentifer id _, _) -> Just $ Annotation id) =<< find (isRight . snd) (Map.mapWithKey (,) $ Map.map (flip (specify pos Map.empty usts) t) usts)
+
 getAssumptionType :: Node -> AnnotationState (Result String Annotation)
 getAssumptionType (DeclN (Decl lhs n a _)) = case a of 
     Just a -> Right <$> insertAnnotation lhs (Finalizeable True a)
@@ -486,7 +493,7 @@ getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) =
         mp <- getTypeMap
         case (full, expcd, rhs) of
             (Right whole, Right expcd, Right rhs) ->
-                case sameTypesNoUnionSpec pos mp expcd rhs of
+                case sameTypesImpl rhs pos mp expcd rhs of
                     Right a -> return $ Right a
                     Left _ -> do
                         x <- f mp pos (Access access p accPos) whole expcd rhs
@@ -503,7 +510,7 @@ getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) =
             g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
             TypeUnion{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
             NewTypeInstanceAnnotation{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
-            StructAnnotation ps -> case sameTypesNoUnionSpec pos mp expected given of 
+            StructAnnotation ps -> case sameTypesImpl given pos mp expected given of 
                 Right a -> return $ Right a
                 Left err -> Right <$> modifyWhole (listAccess acc) whole (mergedTypeConcrete pos mp expected given)
             a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
@@ -647,9 +654,26 @@ getAssumptionType (FunctionDef args ret body pos) =
             case x of
                 Right ret -> do
                     typ <- getAnnotationState $ LhsIdentifer "return" pos
+                    let ntyp = typ >>= (\c -> 
+                            if c then maybe typ Right . matchingUserDefinedType pos (Map.filter isStructOrUnionOrFunction mp) =<< typ 
+                            else typ
+                            ) . isSearchable
                     put whole_old_ans
-                    return (makeFunAnnotation args <$> typ)
+                    return (makeFunAnnotation args <$> ntyp)
                 Left err -> return . Left $ err
+    where
+        isSearchable Annotation{} = False
+        isSearchable AnnotationLiteral{} = False
+        isSearchable NewTypeInstanceAnnotation{} = False
+        isSearchable NewTypeAnnotation{} = False
+        isSearchable OpenFunctionAnnotation{} = False
+        isSearchable GenericAnnotation{} = False
+        isSearchable _ = True
+
+        isStructOrUnionOrFunction TypeUnion{} = True
+        isStructOrUnionOrFunction StructAnnotation{} = True
+        isStructOrUnionOrFunction FunctionAnnotation{} = True
+        isStructOrUnionOrFunction _ = False
 getAssumptionType (Call e args pos) = (\case
                     Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
