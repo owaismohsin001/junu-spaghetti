@@ -454,7 +454,7 @@ makeUnionIfNotSame pos a clhs lhs = do
                 Left err -> return $ Left err
                 Right (AnnotationLiteral "_") -> modifyAnnotationState lhs a
                 Right b ->
-                    case sameTypesImpl b pos m a b of
+                    case sameTypesImpl a pos m a b of
                         Left _ -> f a m (Right b)
                         Right _ -> return $ Right a
                 
