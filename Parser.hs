@@ -217,7 +217,6 @@ compExprParser = binOp modOp arithExprParser ops binCall where
         <|> Text.Megaparsec.Char.string "<"
         ) :: Parser String
 
-
 arithExprParser :: Parser Node
 arithExprParser = binOp modOp termParser (Text.Megaparsec.Char.string "+" <|> Text.Megaparsec.Char.string "-") binCall
 
@@ -281,7 +280,8 @@ annotationAtomParser =
     <|> try (NewTypeInstanceAnnotation <$> strBigId <*> tuple const annotationParser)
     <|> try ((\(Identifier id _) cs -> GenericAnnotation id cs) <$> littleId <*> containerFunction "{" "}" "," const constraintParser)
     <|> try structAnnotationParser
-    <|> (FunctionAnnotation <$> tuple const annotationParser <*> (spaces *> Text.Megaparsec.Char.string "->" *> spaces *> annotationParser))
+    <|> try (FunctionAnnotation <$> tuple const annotationParser <*> (spaces *> Text.Megaparsec.Char.string "->" *> spaces *> annotationParser))
+    <|> (Text.Megaparsec.Char.string "(" *> annotationParser <* Text.Megaparsec.Char.string ")")
     where annId = bigAnnotationId <* notFollowedBy (spaces *> Text.Megaparsec.Char.string "(")
 
 declParser :: Parser Decl
