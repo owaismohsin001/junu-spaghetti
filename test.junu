@@ -148,7 +148,7 @@ let ftr = (a: String, b: {name: String, species: String} | Pet | Person) => Stri
 
 let flr = (x: Pet | Person) => {
     if x is Person {
-        return 1
+        return {x: 1}
     }
     return ftr(x.species, x)
 }

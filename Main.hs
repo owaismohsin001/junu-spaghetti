@@ -458,7 +458,7 @@ makeUnionIfNotSame pos a clhs lhs = do
                         x <- getTypeState a pos 
                         case x of 
                             Right a -> 
-                                case sameTypesImpl a pos m a b of
+                                case sameTypesImpl a pos m b a of
                                     Left _ -> f a m (Right b)
                                     Right _ -> return $ Right a
                             Left err -> return $ Left err
