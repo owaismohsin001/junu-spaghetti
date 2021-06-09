@@ -224,7 +224,7 @@ instance Show Program where
 data Annotations = Annotations (Map.Map Lhs (Finalizeable Annotation)) (Maybe Annotations)
 
 instance Show Annotations where
-    show (Annotations mp res) = (intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp) -- ++ " -> " ++ show res
+    show (Annotations mp res) = intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp
 
 type UserDefinedTypes = Map.Map Lhs Annotation
 

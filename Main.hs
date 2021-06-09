@@ -325,10 +325,11 @@ specifyInternal pos a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer 
 specifyInternal pos a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
     Just b' -> specifyInternal pos a b'
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
-specifyInternal pos a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = 
-    if and $ zipWith (==) cns1 cns2 then
-        addRelation pos b a *> addRelation pos a b $> Right b
-    else undefined
+specifyInternal pos a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = do
+    (\case
+        Right _ -> addRelation pos b a *> addRelation pos a b $> Right b
+        Left err -> return $ Left err
+        ) . sequence =<< mapM (applyConstraintState pos b) cns1
 specifyInternal pos a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
         Right _ -> do
             a <- addTypeVariable pos a b
