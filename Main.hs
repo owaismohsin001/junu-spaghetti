@@ -454,10 +454,14 @@ makeUnionIfNotSame pos a clhs lhs = do
                 Left err -> return $ Left err
                 Right (AnnotationLiteral "_") -> modifyAnnotationState lhs a
                 Right b ->
-                    case sameTypesImpl a pos m a b of
-                        Left _ -> f a m (Right b)
-                        Right _ -> return $ Right a
-                
+                    do 
+                        x <- getTypeState a pos 
+                        case x of 
+                            Right a -> 
+                                case sameTypesImpl a pos m a b of
+                                    Left _ -> f a m (Right b)
+                                    Right _ -> return $ Right a
+                            Left err -> return $ Left err
             ) <$> clhs <*> getTypeMap 
         Left err -> return $ Left err
     where
@@ -488,7 +492,7 @@ getAssumptionType (DeclN (Decl lhs n a _)) = case a of
 getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) = 
     do
         expcd <- getAssumptionType (Access access p accPos)
-        rhs <- getAssumptionType expr
+        rhs <- getTypeStateFrom (getAssumptionType expr) pos
         full <- getTypeStateFrom (getAnnotationState $ initIdentLhs lhs) pos
         mp <- getTypeMap
         case (full, expcd, rhs) of
