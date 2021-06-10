@@ -92,7 +92,11 @@ data Lit =
     LitInt Int P.SourcePos
     | LitBool Bool P.SourcePos
     | LitString String P.SourcePos
-    deriving(Show)
+
+instance Show Lit where
+    show (LitInt i _) = show i
+    show (LitBool b _) = show b
+    show (LitString str _) = str
 
 data LitNoPos =
     LitIntNoPos Int
@@ -120,7 +124,16 @@ data Decl =
     | ImplOpenFunction Lhs [(Lhs, Annotation)] (Maybe Annotation) [Node] Annotation P.SourcePos
     | NewTypeDecl Lhs Annotation P.SourcePos
     | Expr Node
-    deriving(Show)
+
+instance Show Decl where
+    show (Decl lhs rhs _ _) = "let " ++ show lhs ++ " = " ++ show rhs
+    show (Assign lhs rhs _) = show lhs ++ " = " ++ show rhs
+    show (FunctionDecl lhs ann _) = show lhs ++ " :: " ++ show ann
+    show (StructDef lhs ann _) = show lhs ++ " :: " ++ show ann
+    show (OpenFunctionDecl lhs ann _) = "open " ++ show lhs ++ " :: " ++ show ann
+    show (ImplOpenFunction lhs args ret body ftr _) = "impl " ++ show lhs ++ "(" ++ intercalate ", " (map show args) ++ ") => " ++ show ret ++ "{\n" ++ indent (intercalate "\n" (map show body)) ++ "\n} for " ++ show ftr
+    show (NewTypeDecl lhs ann _) = "newtype " ++ show lhs ++ ": " ++ show ann
+    show (Expr n) = show n
 
 data DeclNoPos =
     DeclNoPos Lhs Node
@@ -176,8 +189,22 @@ data Node =
     | CastNode Lhs Annotation P.SourcePos
     | RemoveFromUnionNode Lhs Annotation P.SourcePos 
 
+indent = intercalate "\n" . map ("\t" ++) . lines
+
 instance Show Node where
-    show = show . toNodeNoPos
+    show (DeclN decl) = show decl
+    show (Identifier id _) = id
+    show (Lit lit) = show lit
+    show (FunctionDef args retAnn body _) = "(" ++ intercalate ", " (map show args) ++ ")" ++ " => " ++ show retAnn ++ " {\n" ++ indent (intercalate "\n" (map show body)) ++ "\n}"
+    show (Return n _) = "return " ++ show n
+    show (Call e args _) = show e ++ "(" ++ intercalate ", " (map show args) ++ ")"
+    show (StructN struct) = show struct
+    show (Access n lhs _) = show n ++ "." ++ show lhs
+    show (IfStmnt c ts es _) = "if " ++ show c ++ "{\n" ++ indent (intercalate "\n" (map show ts)) ++ "\n}" ++ " else {\n" ++ indent (intercalate "\n" (map show es)) ++ "\n}"
+    show (IfExpr c t e _) = "if " ++ show c ++ " then " ++ show t ++ " else " ++ show e
+    show (CreateNewType lhs args _) = show lhs ++ "(" ++ intercalate ", " (map show args) ++ ")"
+    show (CastNode lhs ann _) = show lhs ++ " is " ++ show ann
+    show (RemoveFromUnionNode lhs ann _) = show lhs ++ " isnot " ++ show ann
 
 data NodeNoPos =
     DeclNNoPos Decl
@@ -248,6 +275,8 @@ finalize (Finalizeable _ a) = Finalizeable True a
 
 type TypeRelations = Map.Map Annotation (Set.Set Annotation)
 type SubstituteState = State (Annotation, ((TypeRelations, Map.Map Annotation Annotation), UserDefinedTypes))
+
+type TraversableNodeState = State (Int, [Decl], [Node])
 
 newtype GenericPolicy = GenericPolicy{specifyGenericsAllowed :: Bool}
 

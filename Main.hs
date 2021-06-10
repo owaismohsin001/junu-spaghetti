@@ -141,8 +141,10 @@ isGeneric :: P.SourcePos -> UserDefinedTypes -> Annotation -> Bool
 isGeneric pos mp GenericAnnotation{} = True
 isGeneric pos mp AnnotationLiteral{} = False
 isGeneric pos mp (Annotation ann) = maybe False (isGeneric pos mp) (Map.lookup (LhsIdentifer ann pos) mp)
-isGeneric pos mp (FunctionAnnotation args ret) = all (isGeneric pos mp) (ret:args)
-isGeneric pos mp (StructAnnotation ms) = all (isGeneric pos mp) ms
+isGeneric pos mp (FunctionAnnotation args ret) = any (isGeneric pos mp) (ret:args)
+isGeneric pos mp (StructAnnotation ms) = any (isGeneric pos mp) ms
+isGeneric pos mp (NewTypeInstanceAnnotation _ as) = any (isGeneric pos mp) as
+isGeneric pos mp (TypeUnion ts) = any (isGeneric pos mp) ts
 isGeneric pos mp OpenFunctionAnnotation{} = False
 
 substituteConstraints :: SourcePos -> TypeRelations -> Map.Map Annotation Annotation -> UserDefinedTypes -> Constraint -> Either String  Constraint
@@ -441,6 +443,61 @@ earlyReturnToElse (DeclN (Decl lhs n ann pos):xs) = DeclN (Decl lhs (fNode early
 earlyReturnToElse (DeclN (Assign lhs n pos):xs) = DeclN (Assign lhs (fNode earlyReturnToElse n) pos) : earlyReturnToElse xs
 earlyReturnToElse (x:xs) = x : earlyReturnToElse xs
 
+freshDecl :: P.SourcePos -> Node -> TraversableNodeState Decl
+freshDecl pos node = do
+    (i, xs, b) <- get
+    let id = LhsIdentifer ("__new_lifted_lambda_" ++ show i) pos
+    put (i+1, xs ++ [Decl id node Nothing pos], b)
+    return $ Decl id node Nothing pos
+
+getDecls :: TraversableNodeState [Decl]
+getDecls = get >>= \(_, xs, _) -> return xs
+
+putDecls :: TraversableNodeState a -> TraversableNodeState a
+putDecls action = do
+    modify $ \(a, _, b) -> (a, [], b)
+    action
+
+inNewScope :: TraversableNodeState a -> TraversableNodeState a
+inNewScope action = do
+    (a, xs, b) <- get
+    put (a+1, [], b)
+    res <- action
+    put (a, xs, b)
+    return res
+
+lastRegisteredId :: TraversableNodeState String
+lastRegisteredId = do
+    (i, _, _) <- get
+    return ("__new_lifted_lambda_" ++ show (i-1))
+
+registerNode :: Node -> TraversableNodeState Node
+registerNode n@(FunctionDef args ret body pos) = putDecls $ do 
+    mbody <- inNewScope $ liftLambda body
+    decl <- freshDecl pos $ FunctionDef args ret mbody pos
+    id <- lastRegisteredId
+    return $ Identifier id pos
+registerNode (Call e args pos) = putDecls $ Call <$> registerNode e <*> mapM registerNode args <*> return pos
+registerNode (Return n pos) = putDecls $ flip Return pos <$> registerNode n
+registerNode a = return a
+
+getRegister :: Node -> TraversableNodeState (Node, [Decl])
+getRegister n = (,) <$> registerNode n <*> getDecls
+
+liftLambda :: [Node] -> TraversableNodeState [Node]
+liftLambda [] = return []
+liftLambda (DeclN (ImplOpenFunction lhs args ret body ftr pos):xs) = do
+    rest <- liftLambda xs
+    (\mbody -> DeclN (ImplOpenFunction lhs args ret mbody ftr pos) : rest) <$> liftLambda body
+liftLambda (DeclN (Decl lhs n ann pos):xs) = do
+    getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Decl lhs x ann pos) :) <$> liftLambda xs
+liftLambda (DeclN (Assign lhs n pos):xs) = do
+    getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Assign lhs x pos) :) <$> liftLambda xs
+liftLambda (DeclN (Expr n):xs) = do
+    getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Expr x) :) <$> liftLambda xs
+liftLambda (x:xs) = liftLambda xs >>= \rest -> return $ x:rest
+
+initIdentLhs :: Lhs -> Lhs
 initIdentLhs (LhsAccess acc p pos) = LhsIdentifer id pos where (Identifier id pos) = initIdent $ Access acc p pos
 
 initIdent (Access id@Identifier{} _ _) = id
@@ -480,6 +537,7 @@ listAccess n = reverse $ go n where
     go (Access n lhs _) = lhs : listAccess n
     go Identifier{} = []
 
+sameTypesImpl :: Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
 sameTypesImpl TypeUnion{} = sameTypesNoUnionSpec
 sameTypesImpl _ = sameTypes
 
@@ -1262,7 +1320,7 @@ allExists mp = mapM_ (exists mp) mp where
         constraintExists mp (ConstraintHas _ cn, pos) = constraintExists mp (cn, pos)
         constraintExists mp (AnnotationConstraint ann, pos) = exists mp (ann, pos)
 
-tests program = 
+typeCheckedScope program = 
     do
         allExists typesPos
         case runState (mapM getAssumptionType (earlyReturnToElse restProgram)) (AnnotationLiteral "_", (assumeProgram (Program $ earlyReturnToElse restProgram) types, types)) of
@@ -1273,6 +1331,7 @@ tests program =
                     (_, (as, _)) = s
                     (f, s) = runState (mapM consistentTypes (earlyReturnToElse restProgram)) (a, map)
     where 
+        lifted = evalState (liftLambda restProgram) (0, [], restProgram)
         (metProgram, restProgram) = typeNodes program
         typesPos = typeMap metProgram
         types = Map.map fst typesPos
@@ -1280,7 +1339,7 @@ tests program =
 parseFile :: String -> [Char] -> Either String Annotations
 parseFile fn text = 
     case P.runParser Parser.wholeProgramParser fn (filter (/= '\t') text) of
-        Right ns -> tests ns
+        Right ns -> typeCheckedScope ns
         Left e -> Left $ P.errorBundlePretty e
 
 main :: IO ()

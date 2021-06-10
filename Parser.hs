@@ -265,6 +265,7 @@ constraintParser =
     (AnnotationConstraint <$> annotationParser)
     <|> (ConstraintHas <$> (Text.Megaparsec.Char.string "." *> lhsLittleId) <*> (spaces *> Text.Megaparsec.Char.string ":" *> spaces *> constraintParser))
 
+annotationParser :: Parser Annotation
 annotationParser = binOp id annotationAtomParser (spaces *> Text.Megaparsec.Char.string "|" <* spaces) (
     \a _ b _ -> 
         case (a, b) of 
