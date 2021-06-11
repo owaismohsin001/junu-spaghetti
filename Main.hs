@@ -151,13 +151,19 @@ substituteConstraints :: SourcePos -> TypeRelations -> Map.Map Annotation Annota
 substituteConstraints pos rels mp usts (ConstraintHas lhs cs) = ConstraintHas lhs <$> substituteConstraints pos rels mp usts cs 
 substituteConstraints pos rels mp usts (AnnotationConstraint ann) = AnnotationConstraint <$> substituteVariables pos rels mp usts ann
 
+firstPreferablyDefinedRelation pos mp rs k =
+    case Map.lookup k rs of
+        Just s -> if Set.null stf then Right $ Set.elemAt 0 s else Right $ Set.elemAt 0 stf where stf = Set.filter (\x -> isJust (Map.lookup x mp)) s
+        Nothing -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
+
 substituteVariables :: SourcePos -> TypeRelations -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Either String Annotation
 substituteVariables pos rels mp usts fid@(GenericAnnotation id cns) = 
-    maybe (GenericAnnotation id <$> mapM (substituteConstraints pos rels mp usts) cns) (
-        \x -> case firstPreferablyDefinedRelation pos mp rels x of
+    maybe g (\x -> if sameTypesBool pos usts fid x then g else Right x) (Map.lookup fid mp)
+    where 
+        f x = case firstPreferablyDefinedRelation pos mp rels x of
             Right a -> Right a
             Left _ -> Right x
-    ) (Map.lookup fid mp)
+        g = mapM (substituteConstraints pos rels mp usts) cns >>= f . GenericAnnotation id
 substituteVariables pos rels mp usts id@AnnotationLiteral{} = Right id
 substituteVariables pos rels mp usts fid@(Annotation id) = maybe (Left $ noTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
 substituteVariables pos rels mp usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id <$> mapM (substituteVariables pos rels mp usts) anns <*> mapM (substituteVariables pos rels mp usts) annMap
@@ -183,11 +189,6 @@ changeType pos k v = do
 
 reshuffleTypes :: P.SourcePos -> SubstituteState ()
 reshuffleTypes pos = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeType pos) mp) =<< get
-
-firstPreferablyDefinedRelation pos mp rs k =
-    case Map.lookup k rs of
-        Just s -> if Set.null stf then Right $ Set.elemAt 0 s else Right $ Set.elemAt 0 stf where stf = Set.filter (\x -> isJust (Map.lookup x mp)) s
-        Nothing -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
 
 sameTypesNoUnionSpec = sameTypesGeneric (False, True, Map.empty)
 
