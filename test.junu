@@ -131,7 +131,8 @@ impl fst(s: Tup(a{}, b{})) => {
     return identity(s.a)
 } for Tup(a{}, b{})
 
-let tres = fst(swapML(s))
+let snd = (s: Tup(l{}, r{})) => fst(swapML(s))
+let tres = snd(s)
 
 let idres = identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
     return Tup(a, b)

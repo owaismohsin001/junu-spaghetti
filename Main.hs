@@ -751,31 +751,23 @@ getAssumptionType (Call e args pos) = (\case
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
                             Left err -> return $ Left err
-                    Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> 
-                        do
-                            mp <- getTypeMap
-                            anns <- sequence <$> mapM consistentTypes args
-                            case anns of
-                                Right anns -> do
-                                    let f = FunctionAnnotation anns (AnnotationLiteral "_")
-                                    let (spec, rels) = getPartialNoUnderScoreSpecificationRules pos Map.empty mp opf f
-                                    case Map.lookup oret spec of
-                                        Just ret' -> verifyArgs mp anns ret'
-                                        Nothing -> 
-                                            if isGeneric pos mp oret then
-                                                case substituteVariables pos rels spec mp oret of
-                                                    Right ret -> return $ Right ret
-                                                    Left err -> return $ Right oret
-                                            else verifyArgs mp anns oret
-                                Left err -> return $ Left err
-                            where verifyArgs mp anns r = case getSpecificationRules pos Map.empty mp opf $ FunctionAnnotation anns r of
-                                                Right base -> case Map.lookup ft base of
-                                                    Just a -> maybe 
-                                                        (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
-                                                        (const $ return $ Right r)
-                                                        (find (\b -> specifyTypesBool pos base mp b a) impls)
-                                                    Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
-                                                Left err -> return $ Left err
+                    Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> do
+                        mp <- getTypeMap
+                        anns <- sequence <$> mapM consistentTypes args
+                        case anns of
+                            Right anns -> let 
+                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns (AnnotationLiteral "_")) in
+                                case substituteVariables pos rel spec mp oret of
+                                    Right ret' -> case getSpecificationRules pos Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns ret') of
+                                        Right base -> case Map.lookup ft base of
+                                            Just a -> maybe 
+                                                    (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
+                                                    (const . return $ Right ret')
+                                                    (find (\b -> specifyTypesBool pos base mp b a) impls)
+                                            Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
+                                        Left err -> return $ Left err
+                                    Left err -> return $ Left err
+                            Left err -> return $ Left err       
                     Right ann -> return . Left $ "Can't call a value of type " ++ show ann ++ "\n" ++ showPos pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (getAssumptionType e) pos
 getAssumptionType (StructN (Struct ns _)) = 
@@ -1255,31 +1247,23 @@ consistentTypes (Call e args pos) =  (\case
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
                             Left err -> return $ Left err                    
-                    Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> 
-                        do
-                            mp <- getTypeMap
-                            anns <- sequence <$> mapM consistentTypes args
-                            case anns of
-                                Right anns -> do
-                                    let f = FunctionAnnotation anns (AnnotationLiteral "_")
-                                    let (spec, rels) = getPartialNoUnderScoreSpecificationRules pos Map.empty mp opf f
-                                    case Map.lookup oret spec of
-                                        Just ret' -> verifyArgs mp anns ret'
-                                        Nothing -> 
-                                            if isGeneric pos mp oret then
-                                                case substituteVariables pos rels spec mp oret of
-                                                    Right ret -> return $ Right ret
-                                                    Left err -> return $ Right oret
-                                            else verifyArgs mp anns oret
-                                Left err -> return $ Left err
-                            where verifyArgs mp anns r = case getSpecificationRules pos Map.empty mp opf $ FunctionAnnotation anns r of
-                                                Right base -> case Map.lookup ft base of
-                                                    Just a -> maybe 
-                                                        (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
-                                                        (const $ return $ Right r)
-                                                        (find (\b -> specifyTypesBool pos base mp b a) impls)
-                                                    Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
-                                                Left err -> return $ Left err
+                    Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> do
+                        mp <- getTypeMap
+                        anns <- sequence <$> mapM consistentTypes args
+                        case anns of
+                            Right anns -> let 
+                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns (AnnotationLiteral "_")) in
+                                case substituteVariables pos rel spec mp oret of
+                                    Right ret' -> case getSpecificationRules pos Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns ret') of
+                                        Right base -> case Map.lookup ft base of
+                                            Just a -> maybe 
+                                                    (return . Left $ "Could find instance " ++ show opf ++ " for " ++ show a ++ "\n" ++ showPos pos) 
+                                                    (const . return $ Right ret')
+                                                    (find (\b -> specifyTypesBool pos base mp b a) impls)
+                                            Nothing -> return . Left $ "The argument does not even once occur in the whole method\n" ++ showPos pos
+                                        Left err -> return $ Left err
+                                    Left err -> return $ Left err
+                            Left err -> return $ Left err       
                     Right ann -> return . Left $ "Can't call a value of type " ++ show ann ++ "\n" ++ showPos pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (getAssumptionType e) pos
 consistentTypes (Identifier x pos) = getAnnotationState (LhsIdentifer x pos)
