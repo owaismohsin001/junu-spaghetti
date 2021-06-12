@@ -133,7 +133,7 @@ instance Show Decl where
     show (OpenFunctionDecl lhs ann _) = "open " ++ show lhs ++ " :: " ++ show ann
     show (ImplOpenFunction lhs args ret body ftr _) = "impl " ++ show lhs ++ "(" ++ intercalate ", " (map show args) ++ ") => " ++ show ret ++ "{\n" ++ indent (intercalate "\n" (map show body)) ++ "\n} for " ++ show ftr
     show (NewTypeDecl lhs ann _) = "newtype " ++ show lhs ++ ": " ++ show ann
-    show (Expr n) = show n
+    show (Expr n) = "Top-level Expr: " ++ show n
 
 data DeclNoPos =
     DeclNoPos Lhs Node

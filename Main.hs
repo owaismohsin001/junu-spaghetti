@@ -464,6 +464,7 @@ inNewScope action = do
     (a, xs, b) <- get
     put (a+1, [], b)
     res <- action
+    (_, _, b) <- get
     put (a, xs, b)
     return res
 
@@ -478,6 +479,11 @@ registerNode n@(FunctionDef args ret body pos) = putDecls $ do
     decl <- freshDecl pos $ FunctionDef args ret mbody pos
     id <- lastRegisteredId
     return $ Identifier id pos
+registerNode (IfStmnt c ts es pos) = putDecls $ do
+    cx <- registerNode c
+    tsx <- inNewScope $ liftLambda ts
+    esx <- inNewScope $ liftLambda es
+    return $ IfStmnt cx tsx esx pos
 registerNode (Call e args pos) = putDecls $ Call <$> registerNode e <*> mapM registerNode args <*> return pos
 registerNode (Return n pos) = putDecls $ flip Return pos <$> registerNode n
 registerNode a = return a
@@ -490,13 +496,24 @@ liftLambda [] = return []
 liftLambda (DeclN (ImplOpenFunction lhs args ret body ftr pos):xs) = do
     rest <- liftLambda xs
     (\mbody -> DeclN (ImplOpenFunction lhs args ret mbody ftr pos) : rest) <$> liftLambda body
+liftLambda (DeclN opf@OpenFunctionDecl{}:xs) = (DeclN opf : ) <$> liftLambda xs
+liftLambda (DeclN (Decl lhs (FunctionDef args ret body fpos) ann pos):xs) = do
+    mbody <- inNewScope $ liftLambda body
+    decl <- freshDecl pos $ FunctionDef args ret mbody pos
+    rest <- liftLambda xs
+    return $ DeclN (Decl lhs (FunctionDef args ret mbody fpos) ann pos) : rest
 liftLambda (DeclN (Decl lhs n ann pos):xs) = do
     getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Decl lhs x ann pos) :) <$> liftLambda xs
-liftLambda (DeclN (Assign lhs n pos):xs) = do
+liftLambda (DeclN (Assign lhs (FunctionDef args ret body fpos) pos):xs) = do
+    mbody <- inNewScope $ liftLambda body
+    decl <- freshDecl pos $ FunctionDef args ret mbody pos
+    rest <- liftLambda xs
+    return $ DeclN (Assign lhs (FunctionDef args ret mbody fpos) pos) : rest
+liftLambda (DeclN (Assign lhs n pos):xs) =
     getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Assign lhs x pos) :) <$> liftLambda xs
-liftLambda (DeclN (Expr n):xs) = do
+liftLambda (DeclN (Expr n):xs) = 
     getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Expr x) :) <$> liftLambda xs
-liftLambda (x:xs) = liftLambda xs >>= \rest -> return $ x:rest
+liftLambda (n:ns) = getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (x :) <$> liftLambda ns
 
 initIdentLhs :: Lhs -> Lhs
 initIdentLhs (LhsAccess acc p pos) = LhsIdentifer id pos where (Identifier id pos) = initIdent $ Access acc p pos
