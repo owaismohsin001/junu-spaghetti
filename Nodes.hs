@@ -276,7 +276,7 @@ finalize (Finalizeable _ a) = Finalizeable True a
 type TypeRelations = Map.Map Annotation (Set.Set Annotation)
 type SubstituteState = State (Annotation, ((TypeRelations, Map.Map Annotation Annotation), UserDefinedTypes))
 
-type TraversableNodeState = State (Int, [Decl], [Node])
+type TraversableNodeState = State (Int, [Decl])
 
 newtype GenericPolicy = GenericPolicy{specifyGenericsAllowed :: Bool}
 

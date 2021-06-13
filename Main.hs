@@ -450,31 +450,30 @@ earlyReturnToElse (x:xs) = x : earlyReturnToElse xs
 
 freshDecl :: P.SourcePos -> Node -> TraversableNodeState Decl
 freshDecl pos node = do
-    (i, xs, b) <- get
+    (i, xs) <- get
     let id = LhsIdentifer ("__new_lifted_lambda_" ++ show i) pos
-    put (i+1, xs ++ [Decl id node Nothing pos], b)
+    put (i+1, xs ++ [Decl id node Nothing pos])
     return $ Decl id node Nothing pos
 
 getDecls :: TraversableNodeState [Decl]
-getDecls = get >>= \(_, xs, _) -> return xs
+getDecls = get >>= \(_, xs) -> return xs
 
 putDecls :: TraversableNodeState a -> TraversableNodeState a
 putDecls action = do
-    modify $ \(a, _, b) -> (a, [], b)
+    modify $ \(a, _) -> (a, [])
     action
 
 inNewScope :: TraversableNodeState a -> TraversableNodeState a
 inNewScope action = do
-    (a, xs, b) <- get
-    put (a+1, [], b)
+    (a, xs) <- get
+    put (a+1, [])
     res <- action
-    (_, _, b) <- get
-    put (a, xs, b)
+    put (a, xs)
     return res
 
 lastRegisteredId :: TraversableNodeState String
 lastRegisteredId = do
-    (i, _, _) <- get
+    (i, _) <- get
     return ("__new_lifted_lambda_" ++ show (i-1))
 
 registerNode :: Node -> TraversableNodeState Node
@@ -490,6 +489,10 @@ registerNode (IfStmnt c ts es pos) = putDecls $ do
     return $ IfStmnt cx tsx esx pos
 registerNode (Call e args pos) = putDecls $ Call <$> registerNode e <*> mapM registerNode args <*> return pos
 registerNode (Return n pos) = putDecls $ flip Return pos <$> registerNode n
+registerNode (StructN (Struct mp pos)) = putDecls $ StructN . flip Struct pos <$> mapM registerNode mp
+registerNode (IfExpr c t e pos) = putDecls $ IfExpr <$> registerNode c <*> registerNode t <*> registerNode e <*> return pos
+registerNode (Access n lhs pos) = putDecls $ flip Access lhs <$> registerNode n <*> return pos
+registerNode (CreateNewType lhs args pos) = putDecls $ CreateNewType lhs <$> mapM registerNode args <*> return pos
 registerNode a = return a
 
 getRegister :: Node -> TraversableNodeState (Node, [Decl])
@@ -497,20 +500,18 @@ getRegister n = (,) <$> registerNode n <*> getDecls
 
 liftLambda :: [Node] -> TraversableNodeState [Node]
 liftLambda [] = return []
-liftLambda (DeclN (ImplOpenFunction lhs args ret body ftr pos):xs) = do
+liftLambda (DeclN (ImplOpenFunction lhs args ret body ftr pos):xs) = putDecls $ do
     rest <- liftLambda xs
     (\mbody -> DeclN (ImplOpenFunction lhs args ret mbody ftr pos) : rest) <$> liftLambda body
 liftLambda (DeclN opf@OpenFunctionDecl{}:xs) = (DeclN opf : ) <$> liftLambda xs
-liftLambda (DeclN (Decl lhs (FunctionDef args ret body fpos) ann pos):xs) = do
+liftLambda (DeclN (Decl lhs (FunctionDef args ret body fpos) ann pos):xs) =  putDecls $ do
     mbody <- inNewScope $ liftLambda body
-    decl <- freshDecl pos $ FunctionDef args ret mbody pos
     rest <- liftLambda xs
     return $ DeclN (Decl lhs (FunctionDef args ret mbody fpos) ann pos) : rest
 liftLambda (DeclN (Decl lhs n ann pos):xs) = do
     getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Decl lhs x ann pos) :) <$> liftLambda xs
-liftLambda (DeclN (Assign lhs (FunctionDef args ret body fpos) pos):xs) = do
+liftLambda (DeclN (Assign lhs (FunctionDef args ret body fpos) pos):xs) = putDecls $ do
     mbody <- inNewScope $ liftLambda body
-    decl <- freshDecl pos $ FunctionDef args ret mbody pos
     rest <- liftLambda xs
     return $ DeclN (Assign lhs (FunctionDef args ret mbody fpos) pos) : rest
 liftLambda (DeclN (Assign lhs n pos):xs) =
@@ -1329,15 +1330,15 @@ allExists mp = mapM_ (exists mp) mp where
 typeCheckedScope program = 
     do
         allExists typesPos
-        case runState (mapM getAssumptionType (earlyReturnToElse restProgram)) (AnnotationLiteral "_", (assumeProgram (Program $ earlyReturnToElse restProgram) types, types)) of
+        case runState (mapM getAssumptionType (earlyReturnToElse lifted)) (AnnotationLiteral "_", (assumeProgram (Program $ earlyReturnToElse lifted) types, types)) of
             (res, (a, map)) -> case sequence_ res of
                 Left err -> Left err 
                 Right () -> res >> Right as where
                     res = sequence f
                     (_, (as, _)) = s
-                    (f, s) = runState (mapM consistentTypes (earlyReturnToElse restProgram)) (a, map)
+                    (f, s) = runState (mapM consistentTypes (earlyReturnToElse lifted)) (a, map)
     where 
-        lifted = evalState (liftLambda restProgram) (0, [], restProgram)
+        lifted = evalState (liftLambda restProgram) (0, [])
         (metProgram, restProgram) = typeNodes program
         typesPos = typeMap metProgram
         types = Map.map fst typesPos
@@ -1352,5 +1353,11 @@ main :: IO ()
 main = do
     text <- readFile "test.junu"
     case parseFile "test.junu" text of
-        Right as -> print as
+        Right as -> print $ f as
         Left a -> putStrLn a
+    where 
+        p (LhsIdentifer k _) _
+            | null $ tail k = True
+            | head k == '_' && head (tail k) == '_' = False
+            | otherwise = True
+        f (Annotations mp r) = Annotations (Map.filterWithKey p mp) r

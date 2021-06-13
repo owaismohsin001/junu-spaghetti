@@ -110,18 +110,18 @@ let fn = (c: st{.n: t{}, .a: Int}, a: t{}) => {
     return c.n
 }
 
-let swapG = (a: x{.a: a{}, .b: b{}}, f: (b{}, a{}) -> y{.a: b{}, .b: a{}}) => {
+let swapG = (a: x{.a: ax{}, .b: bx{}}, f: (bx{}, ax{}) -> y{.a: bx{}, .b: ax{}}) => {
     return f(a.b, a.a)
 }
 
-let swapML = (ml: x{.a: a{}, .b: b{}}) => {
+let swapML = (ml: x{.a: ax{}, .b: bx{}}) => {
     return Tup(ml.b, ml.a)
 }
 
 fn({n: {month: 2, weekday: 5, year: 1999}, a: 1}, {month: 3, weekday: 5, year: 1999})
 let btool = fn({n: false, a: 4, x: "Hello"}, true)
 
-let mlres = swapML(Tup(st, st.pet))
+let mlres = swapML(Tup(st, Tup(1, st.pet)))
 
 let identity = (a: x{}) => { return a }
 
@@ -134,7 +134,7 @@ impl fst(s: Tup(a{}, b{})) => {
 let snd = (s: Tup(l{}, r{})) => fst(swapML(s))
 let tres = snd(s)
 
-let idres = identity(apply(identity, swapG(s, (a: o{}, b: f{}) => {
+let idres = identity(apply(identity, swapG(s, (a: oi{}, b: fi{}) => {
     return Tup(a, b)
 })))
 
