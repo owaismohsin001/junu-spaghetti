@@ -192,26 +192,30 @@ reshuffleTypes pos = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeTy
 
 sameTypesNoUnionSpec = sameTypesGeneric (False, True, Map.empty)
 
-addTypeVariableGeneralized pos stmnt k v =  do
-    (a, ((rs, mp), usts)) <- get
-    case Map.lookup k mp of
-        Nothing -> addToMap a rs mp usts k v
-        Just a -> do
-            case sameTypesNoUnionSpec pos usts a v of
-                Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
-                    case Map.lookup k rs of
-                        Just st -> if Set.member v st then addToMap a rs mp usts k v else return $ Left err
-                        Nothing -> return $ Left err
-                Right a -> addToMap a rs mp usts k v
-        where 
-            addToMap a rs mp usts k v = do
-                put (a, ((rs, Map.insert k v mp), usts))
-                stmnt
-                reshuffleTypes pos
-                return $ Right v
+addTypeVariableGeneralized n pos stmnt k v = do
+        (a, ((rs, mp), usts)) <- get
+        case Map.lookup k mp of
+            Nothing -> addToMap a rs mp usts k v
+            Just a -> do
+                case sameTypesNoUnionSpec pos usts a v of
+                    Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
+                        case Map.lookup k rs of
+                            Just st -> if Set.member v st then addToMap a rs mp usts k v else return $ Left err
+                            Nothing -> 
+                                if n > 0 then do
+                                    reshuffleTypes pos
+                                    addTypeVariableGeneralized (n-1) pos stmnt k v
+                                    else return $ Left err
+                    Right a -> addToMap a rs mp usts k v
+    where
+        addToMap a rs mp usts k v = do
+            put (a, ((rs, Map.insert k v mp), usts))
+            stmnt
+            reshuffleTypes pos
+            return $ Right v
 
 addTypeVariable :: SourcePos -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
-addTypeVariable pos = addTypeVariableGeneralized pos (updateRelations pos)
+addTypeVariable pos = addTypeVariableGeneralized 5 pos (updateRelations pos)
 
 -- This is written horribly, rewrite it
 updateSingleRelation pos r = do
@@ -228,7 +232,7 @@ updateSingleRelation pos r = do
             mls' = case fnv of 
                 Just a -> map (\(k, _) -> (k, a)) mls
                 Nothing -> []
-            f = addTypeVariableGeneralized pos (return $ Right ())
+            f = addTypeVariableGeneralized 5 pos (return $ Right ())
 
             firstNonUnderscore [] = Nothing 
             firstNonUnderscore ((_, AnnotationLiteral "_"):xs) = firstNonUnderscore xs
