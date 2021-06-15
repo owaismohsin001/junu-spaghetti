@@ -510,7 +510,7 @@ lastRegisteredId = do
     return ("__new_lifted_lambda_" ++ show (i-1))
 
 registerNode :: Node -> TraversableNodeState Node
-registerNode n@(FunctionDef args ret body pos) = putDecls $ do 
+registerNode n@(FunctionDef args ret body pos) = do 
     mbody <- inNewScope $ liftLambda body
     decl <- freshDecl pos $ FunctionDef args ret mbody pos
     id <- lastRegisteredId
@@ -520,12 +520,12 @@ registerNode (IfStmnt c ts es pos) = putDecls $ do
     tsx <- inNewScope $ liftLambda ts
     esx <- inNewScope $ liftLambda es
     return $ IfStmnt cx tsx esx pos
-registerNode (Call e args pos) = putDecls $ Call <$> registerNode e <*> mapM registerNode args <*> return pos
-registerNode (Return n pos) = putDecls $ flip Return pos <$> registerNode n
-registerNode (StructN (Struct mp pos)) = putDecls $ StructN . flip Struct pos <$> mapM registerNode mp
-registerNode (IfExpr c t e pos) = putDecls $ IfExpr <$> registerNode c <*> registerNode t <*> registerNode e <*> return pos
-registerNode (Access n lhs pos) = putDecls $ flip Access lhs <$> registerNode n <*> return pos
-registerNode (CreateNewType lhs args pos) = putDecls $ CreateNewType lhs <$> mapM registerNode args <*> return pos
+registerNode (Call e args pos) = Call <$> registerNode e <*> mapM registerNode args <*> return pos
+registerNode (Return n pos) = flip Return pos <$> registerNode n
+registerNode (StructN (Struct mp pos)) = StructN . flip Struct pos <$> mapM registerNode mp
+registerNode (IfExpr c t e pos) = IfExpr <$> registerNode c <*> registerNode t <*> registerNode e <*> return pos
+registerNode (Access n lhs pos) = flip Access lhs <$> registerNode n <*> return pos
+registerNode (CreateNewType lhs args pos) = CreateNewType lhs <$> mapM registerNode args <*> return pos
 registerNode a = return a
 
 getRegister :: Node -> TraversableNodeState (Node, [Decl])

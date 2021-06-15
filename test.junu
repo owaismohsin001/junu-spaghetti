@@ -110,7 +110,7 @@ let fn = (c: st{.n: t{}, .a: Int}, a: t{}) => {
     return c.n
 }
 
-let swapG = (a: x{.a: ax{}, .b: bx{}}, f: (bx{}, ax{}) -> y{.a: bx{}, .b: ax{}}) => {
+let swapG = (a: x{.a: ax{}, .b: bx{}}, f: (bx{}, ax{}) -> Tup(bx{}, ax{})) => {
     return f(a.b, a.a)
 }
 
@@ -134,9 +134,11 @@ impl fst(s: Tup(a{}, b{})) => {
 let snd = (s: Tup(l{}, r{})) => fst(swapML(s))
 let tres = snd(s)
 
-let idres = identity(apply(identity, swapG(s, (a: oi{}, b: fi{}) => {
+let idresf = (s: Tup(q{}, r{})) => identity(apply(identity, swapG(s, (a: oi{}, b: fi{}) => {
     return Tup(a, b)
 })))
+
+let idres = idresf(s)
 
 let ftr = (a: String, b: {name: String, species: String} | Pet | Person) => String {
     if b notis Person {
