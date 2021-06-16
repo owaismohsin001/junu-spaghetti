@@ -830,10 +830,9 @@ getAssumptionType (Call e args pos) = (\case
                     Right ann -> return . Left $ "Can't call a value of type " ++ show ann ++ "\n" ++ showPos pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (getAssumptionType e) pos
 getAssumptionType (StructN (Struct ns _)) = 
-    (\xs -> 
-        mapRight 
+        (\xs -> mapRight 
             (return . Right $ AnnotationLiteral "_") 
-            (const . return . Right . StructAnnotation $ Map.map (\(Right a) -> a) xs)) =<< mapM getAssumptionType ns
+            (const . return $ StructAnnotation <$> sequence xs)) =<< mapM getAssumptionType ns
 getAssumptionType (Access st p pos) = do
     mp <- getTypeMap
     f mp =<< getTypeStateFrom (consistentTypes st) pos where 

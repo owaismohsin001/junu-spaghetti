@@ -209,7 +209,7 @@ instance Show Node where
 data NodeNoPos =
     DeclNNoPos Decl
     | IdentifierNoPos String
-    | LitNoPos Lit
+    | LitNoPos LitNoPos
     | FunctionDefNoPos [(Lhs, Annotation)] (Maybe Annotation) [Node]
     | ReturnNoPos Node
     | CallNoPos Node [Node]
@@ -225,6 +225,7 @@ data NodeNoPos =
 toNodeNoPos :: Node -> NodeNoPos
 toNodeNoPos (DeclN d) = DeclNNoPos d
 toNodeNoPos (Identifier s _) = IdentifierNoPos s
+toNodeNoPos (Lit lit) = LitNoPos $ toLitNoPos lit
 toNodeNoPos (FunctionDef xs a b _) = FunctionDefNoPos xs a b
 toNodeNoPos (Return n _) = ReturnNoPos n
 toNodeNoPos (Call e as _) = CallNoPos e as
@@ -235,7 +236,6 @@ toNodeNoPos (IfExpr a b c _) = IfExprNoPos a b c
 toNodeNoPos (CreateNewType a b _) = CreateNewTypeNoPos a (map toNodeNoPos b)
 toNodeNoPos (CastNode a b _) = CastNodeNoPos a b
 toNodeNoPos (RemoveFromUnionNode a b _) =  RemoveFromUnionNodeNoPos a b
--- toNodeNoPos e = error $ show e
 
 instance Eq Node where
     a == b = toNodeNoPos a == toNodeNoPos b

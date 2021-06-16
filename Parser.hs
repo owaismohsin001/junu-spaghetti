@@ -224,7 +224,13 @@ termParser :: Parser Node
 termParser = binOp modOp accessParser (Text.Megaparsec.Char.string "*" <|> Text.Megaparsec.Char.string "/") binCall
 
 accessParser :: Parser Node
-accessParser = binOpGeneralized id atomParser lhsLittleId (Text.Megaparsec.Char.string ".") (\a _ b pos -> Access a b pos)
+accessParser = do
+        pos <- getSourcePos
+        fx <- binOpGeneralized id atomParser lhsLittleId (Text.Megaparsec.Char.string ".") (\a _ b pos -> Access a b pos)
+        try ((\a as -> Call (Access fx a pos) (fx:as) pos)
+            <$> (Text.Megaparsec.Char.string ":" *> lhsLittleId) <*> tuple const exprParser) <|> try ( (\a as -> Call (Access fx a pos) (fx:as) pos)
+            <$> lhsLittleId
+            <*> tuple const exprParser) <|> return fx
 
 inlineIfParser :: Parser Node
 inlineIfParser = (\pos c t e -> IfExpr c t e pos)
