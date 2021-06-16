@@ -541,17 +541,17 @@ liftLambda (DeclN (Decl lhs (FunctionDef args ret body fpos) ann pos):xs) =  put
     mbody <- inNewScope $ liftLambda body
     rest <- liftLambda xs
     return $ DeclN (Decl lhs (FunctionDef args ret mbody fpos) ann pos) : rest
-liftLambda (DeclN (Decl lhs n ann pos):xs) = do
+liftLambda (DeclN (Decl lhs n ann pos):xs) = putDecls $ do
     getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Decl lhs x ann pos) :) <$> liftLambda xs
 liftLambda (DeclN (Assign lhs (FunctionDef args ret body fpos) pos):xs) = putDecls $ do
     mbody <- inNewScope $ liftLambda body
     rest <- liftLambda xs
     return $ DeclN (Assign lhs (FunctionDef args ret mbody fpos) pos) : rest
 liftLambda (DeclN (Assign lhs n pos):xs) =
-    getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Assign lhs x pos) :) <$> liftLambda xs
+    putDecls $ getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Assign lhs x pos) :) <$> liftLambda xs
 liftLambda (DeclN (Expr n):xs) = 
-    getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Expr x) :) <$> liftLambda xs
-liftLambda (n:ns) = getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (x :) <$> liftLambda ns
+    putDecls $ getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Expr x) :) <$> liftLambda xs
+liftLambda (n:ns) = putDecls $ getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (x :) <$> liftLambda ns
 
 initIdentLhs :: Lhs -> Lhs
 initIdentLhs (LhsAccess acc p pos) = LhsIdentifer id pos where (Identifier id pos) = initIdent $ Access acc p pos
@@ -1400,4 +1400,5 @@ main = do
             | null $ tail k = True
             | head k == '_' && head (tail k) == '_' = False
             | otherwise = True
+        p a _ = error $ "Unexpected pattern " ++ show a
         f (Annotations mp r) = Annotations (Map.filterWithKey p mp) r
