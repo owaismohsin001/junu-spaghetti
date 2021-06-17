@@ -14,6 +14,7 @@ import Text.Megaparsec.Pos (mkPos)
 import Data.Functor
 import qualified Data.Set as Set
 import Data.Maybe
+import Data.Tuple
 import qualified Parser
 import Nodes
 
@@ -1099,7 +1100,7 @@ sameTypesGeneric a = sameTypesGenericCrt a comparisionEither
 sameTypes :: SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
 sameTypes = sameTypesGeneric (True, False, Map.empty)
 
-getTypeMap :: State (a, (b, UserDefinedTypes)) (Map.Map Lhs Annotation)
+getTypeMap :: State (a, (b, c)) c
 getTypeMap = gets (snd . snd)
 
 excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState Annotation
@@ -1360,19 +1361,78 @@ allExists mp = mapM_ (exists mp) mp where
             Nothing -> Left $ noTypeFound id pos
     exists mp (AnnotationLiteral lit, pos) = Right ()
     exists mp (FunctionAnnotation as ret, pos) = mapM_ (exists mp . (, pos)) as >> exists mp (ret, pos)
-    exists mp (TypeUnion s, pos) = mapM_ (\x -> exists mp (x, pos)) (Set.toList s)
+    exists mp (TypeUnion s, pos) = mapM_ (exists mp . (, pos)) (Set.toList s)
+    exists mp (OpenFunctionAnnotation anns ret ftr _, pos) = mapM_ (exists mp . (, pos)) $ [ftr, ret] ++ anns
     exists mp (StructAnnotation xs, pos) = mapM_ (exists mp . (, pos)) (Map.elems xs)
     exists mp (GenericAnnotation _ cns, pos) = mapM_ (constraintExists mp . (, pos)) cns where 
         constraintExists mp (ConstraintHas _ cn, pos) = constraintExists mp (cn, pos)
         constraintExists mp (AnnotationConstraint ann, pos) = exists mp (ann, pos)
 
+newTypeName :: P.SourcePos -> DefineTypesState Lhs
+newTypeName pos = do
+    s <- get
+    (a, ((i, b), c)) <- get
+    put (a, ((i+1, b), c))
+    return $ LhsIdentifer ("auto_generated_type_" ++ show i) pos
+
+defineSingleType :: P.SourcePos -> Annotation -> DefineTypesState Annotation
+defineSingleType pos f@FunctionAnnotation{} = return f
+defineSingleType pos lit@AnnotationLiteral{} = return lit
+defineSingleType pos f@OpenFunctionAnnotation{} = return f
+defineSingleType pos (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (defineSingleType pos) anns
+defineSingleType pos (TypeUnion st) = TypeUnion <$> (Set.fromList <$> mapM (defineSingleType pos) (Set.toList st))
+defineSingleType pos ann = do
+    mp <- getTypeMap
+    case find (isRight . fst) $ Map.mapWithKey (\ann2 v -> (sameTypes pos (invertUserDefinedTypes mp) ann ann2, v)) mp of
+        Just (Right ann, lhs@(LhsIdentifer id _)) -> modifyAnnotations lhs (Annotation id) $> Annotation id
+        Just a -> error $ "Unexpected " ++ show a ++ " from defineSingleType"
+        Nothing -> do
+            tn <- newTypeName pos
+            addToMap tn ann
+            modifyAnnotations tn ann
+            defineSingleType pos ann
+            modifyAnnotations tn (Annotation $ show tn) $> ann
+    where 
+        addToMap :: Lhs -> Annotation -> DefineTypesState ()
+        addToMap tn ann = do
+            (a, ((i, b), mp)) <- get
+            let new_mp = Map.insert ann tn mp
+            put (a, ((i, b), new_mp))
+
+        modifyAnnotations :: Lhs -> Annotation -> DefineTypesState ()
+        modifyAnnotations tn ann = do
+            (a, ((i, anns), mp)) <- get
+            new_anns <- f (invertUserDefinedTypes mp) anns
+            put (a, ((i, new_anns), mp))
+            where 
+                f mp (CompleteAnnotations anns rest) = CompleteAnnotations <$> sequence (
+                    Map.map (\ann2 -> if isRight $ sameTypesImpl ann2 pos mp ann ann2 then return . Annotation $ show tn else defineSingleType pos ann2) anns
+                    ) <*> sequence (f mp <$> rest)
+
+defineTypesState :: CompleteAnnotations -> DefineTypesState CompleteAnnotations
+defineTypesState (CompleteAnnotations anns rest) = CompleteAnnotations
+  <$> sequence (Map.mapWithKey (\(LhsIdentifer _ pos) v -> defineSingleType pos v) anns)
+  <*> sequence (defineTypesState <$> rest)
+
+defineAllTypes :: UserDefinedTypes -> CompleteAnnotations -> (UserDefinedTypes, CompleteAnnotations)
+defineAllTypes usts anns = (invertUserDefinedTypes $ snd $ snd st, snd . fst . snd $ st) where 
+    st = execState (defineTypesState anns) (AnnotationLiteral "_", ((0, anns), invertUserDefinedTypes usts))
+
+removeFinalization :: Annotations -> CompleteAnnotations
+removeFinalization (Annotations anns Nothing) = CompleteAnnotations (Map.map fromFinalizeable anns) Nothing
+removeFinalization (Annotations anns rest) = CompleteAnnotations (Map.map fromFinalizeable anns) (removeFinalization <$> rest)
+
+invertUserDefinedTypes :: Ord k => Map.Map a k -> Map.Map k a
+invertUserDefinedTypes usts = Map.fromList $ Map.elems $ Map.mapWithKey (curry swap) usts
+
+typeCheckedScope :: [Node] -> Either String (UserDefinedTypes, CompleteAnnotations)
 typeCheckedScope program = 
     do
         allExists typesPos
         case runState (mapM getAssumptionType (earlyReturnToElse lifted)) (AnnotationLiteral "_", (assumeProgram (Program $ earlyReturnToElse lifted) types, types)) of
-            (res, (a, map)) -> case sequence_ res of
+            (res, (a, map@(_, usts))) -> case sequence_ res of
                 Left err -> Left err 
-                Right () -> res >> Right as where
+                Right () -> res >> Right (defineAllTypes usts (removeFinalization as)) where
                     res = sequence f
                     (_, (as, _)) = s
                     (f, s) = runState (mapM consistentTypes (earlyReturnToElse lifted)) (a, map)
@@ -1382,7 +1442,7 @@ typeCheckedScope program =
         typesPos = typeMap metProgram
         types = Map.map fst typesPos
 
-parseFile :: String -> [Char] -> Either String Annotations
+parseFile :: String -> [Char] -> Either String (UserDefinedTypes, CompleteAnnotations)
 parseFile fn text = 
     case P.runParser Parser.wholeProgramParser fn (filter (/= '\t') text) of
         Right ns -> typeCheckedScope ns
@@ -1392,7 +1452,7 @@ main :: IO ()
 main = do
     text <- readFile "test.junu"
     case parseFile "test.junu" text of
-        Right as -> print $ f as
+        Right (usts, as) -> printUsts usts *> print (f as)
         Left a -> putStrLn a
     where 
         p (LhsIdentifer k _) _
@@ -1400,4 +1460,7 @@ main = do
             | head k == '_' && head (tail k) == '_' = False
             | otherwise = True
         p a _ = error $ "Unexpected pattern " ++ show a
-        f (Annotations mp r) = Annotations (Map.filterWithKey p mp) r
+        f (CompleteAnnotations mp r) = CompleteAnnotations (Map.filterWithKey p mp) r
+
+        printUsts :: UserDefinedTypes -> IO ()
+        printUsts usts = sequence_ $ Map.mapWithKey (\k v -> putStrLn $ show k ++ " = " ++ show v) usts
