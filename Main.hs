@@ -1376,9 +1376,10 @@ newTypeName pos = do
     return $ LhsIdentifer ("auto_generated_type_" ++ show i) pos
 
 defineSingleType :: P.SourcePos -> Annotation -> DefineTypesState Annotation
-defineSingleType pos f@FunctionAnnotation{} = return f
+defineSingleType pos (FunctionAnnotation anns ret) = FunctionAnnotation <$> mapM (defineSingleType pos) anns <*> defineSingleType pos ret
+defineSingleType pos g@GenericAnnotation{} = return g
 defineSingleType pos lit@AnnotationLiteral{} = return lit
-defineSingleType pos f@OpenFunctionAnnotation{} = return f
+defineSingleType pos (OpenFunctionAnnotation anns ret ftr impls) = OpenFunctionAnnotation <$> mapM (defineSingleType pos) anns <*> defineSingleType pos ret <*> defineSingleType pos ftr <*> mapM (defineSingleType pos) impls
 defineSingleType pos (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (defineSingleType pos) anns
 defineSingleType pos (TypeUnion st) = TypeUnion <$> (Set.fromList <$> mapM (defineSingleType pos) (Set.toList st))
 defineSingleType pos ann = do
