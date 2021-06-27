@@ -126,7 +126,9 @@ data Decl =
     | Expr Node
 
 instance Show Decl where
-    show (Decl lhs rhs _ _) = "let " ++ show lhs ++ " = " ++ show rhs
+    show (Decl lhs rhs ann _) = case ann of
+        Just ann -> "let " ++ show lhs ++ ": " ++ show ann ++ " = " ++ show rhs
+        Nothing -> "let " ++ show lhs ++ " = " ++ show rhs
     show (Assign lhs rhs _) = show lhs ++ " = " ++ show rhs
     show (FunctionDecl lhs ann _) = show lhs ++ " :: " ++ show ann
     show (StructDef lhs ann _) = show lhs ++ " :: " ++ show ann
@@ -248,19 +250,15 @@ newtype Program = Program [Node]
 instance Show Program where
     show (Program ns) = intercalate "\n" $ map show ns
 
-data Annotations = Annotations (Map.Map Lhs (Finalizeable Annotation)) (Maybe Annotations)
-data CompleteAnnotations = CompleteAnnotations (Map.Map Lhs Annotation) (Maybe CompleteAnnotations)
+data Annotations a = Annotations (Map.Map Lhs a) (Maybe (Annotations a))
 
-instance Show Annotations where
+instance Show a => Show (Annotations a) where
     show (Annotations mp res) = intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp
-
-instance Show CompleteAnnotations where
-    show (CompleteAnnotations mp res) = intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp
 
 type UserDefinedTypes = Map.Map Lhs Annotation
 
-type AnnotationState = State (Annotation, (Annotations, UserDefinedTypes))
-type DefineTypesState = State (Annotation, ((Int, CompleteAnnotations), Map.Map Annotation Lhs))
+type AnnotationState a = State (Annotation, ((Int, a), UserDefinedTypes))
+type DefineTypesState a = State (Annotation, ((Int, Annotations a), Map.Map Annotation Lhs))
 
 data Finalizeable a = Finalizeable Bool a
 

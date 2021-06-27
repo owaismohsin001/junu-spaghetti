@@ -19,12 +19,14 @@ extra-source-files:  CHANGELOG.md
 executable junu
   main-is:             Main.hs
   other-modules:       Nodes
+                       , TypeChecker
                        , Parser
   other-extensions:    LambdaCase
                        , TupleSections
   build-depends:       base >=4.14 && <4.15
                        , mtl
                        , containers
+                       , process
                        , megaparsec
                        , ordered-containers
   -- hs-source-dirs:

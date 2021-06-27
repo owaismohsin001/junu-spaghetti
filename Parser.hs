@@ -186,11 +186,12 @@ modOp ">=" = "gte"
 modOp ">" = "gt"
 modOp "<" = "lt"
 modOp "<=" = "lte"
-modOp "&" = "and"
-modOp "|" = "or"
+modOp "&" = "anded"
+modOp "|" = "ored"
 modOp "+" = "add"
 modOp "-" = "sub"
 modOp "/" = "div"
+modOp "%" = "mod"
 modOp "*" = "mul"
 modOp "is" = "is"
 modOp "notis" = "notis"
@@ -221,7 +222,7 @@ arithExprParser :: Parser Node
 arithExprParser = binOp modOp termParser (Text.Megaparsec.Char.string "+" <|> Text.Megaparsec.Char.string "-") binCall
 
 termParser :: Parser Node
-termParser = binOp modOp accessParser (Text.Megaparsec.Char.string "*" <|> Text.Megaparsec.Char.string "/") binCall
+termParser = binOp modOp accessParser (Text.Megaparsec.Char.string "*" <|> Text.Megaparsec.Char.string "/" <|> Text.Megaparsec.Char.string "%") binCall
 
 accessParser :: Parser Node
 accessParser = do
