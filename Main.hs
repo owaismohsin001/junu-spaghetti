@@ -40,7 +40,7 @@ generateLuaTypes (Annotation id) = "function(a) return Is" ++ id ++ "(a) end"
 generateLuaTypes (AnnotationLiteral id) = "function(a) return Is" ++ id ++ "(a) end"
 generateLuaTypes (FunctionAnnotation args ret) = "function(a) return IsFunction" ++ "(" ++ show (length args) ++ ")(a) end"
 generateLuaTypes (StructAnnotation mp) = "function(a) return IsStruct({structSpec = {"++ intercalate ", " (map (\ (k, v) -> generateLhsLua k ++ " = " ++ generateLuaTypes v) $ Map.toList mp) ++ "}})(a) end"
-generateLuaTypes (GenericAnnotation _ _) = "function(a) return anyMatching({})(a) end"
+generateLuaTypes (GenericAnnotation _ _) = "function(a) return AnyMatching({constraintSpec = {}})(a) end"
 generateLuaTypes (NewTypeInstanceAnnotation id args) = "function(a) return IsNamedType({namedTypeSpec = {name = " ++ show id ++ ", args = {" ++ intercalate ", " (map generateLuaTypes args) ++ "}}})(a) end"
 generateLuaTypes (TypeUnion ts) = "function(a) return Choice({" ++ intercalate ", " (Set.toList $ Set.map generateLuaTypes ts) ++ "})(a) end"
 generateLuaTypes a = error $ "Cannot reach type annotation " ++ show a 

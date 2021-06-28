@@ -38,6 +38,21 @@ function IsStruct(spec)
     end
 end
 
+function AnyMatching(spec)
+    local spec = spec.constraintSpec
+    print("iudni")
+    return function(struct)
+        print('indiu')
+        if spec == nil then return false end
+        print('ijdni')
+        for k, f in pairs(spec) do
+            if struct[k] == nil then return false end
+            if not f(struct[k]) then return false end
+        end
+        return true
+    end
+end
+
 function IsNamedType(spec)
     local spec = spec.namedTypeSpec
     return function(typ)
@@ -90,8 +105,9 @@ function IsType(val, spec)
     if type(spec) == "function" then return spec(val) end
     if type(spec) == "table" then
         if type(val) == "function" and spec.functionSpec ~= nil then return true end
-        if type(val) == "table" and spec.structSpec ~= nil then return IsStruct(spec.structSpec)(val) end
-        if type(val) == "table" and val ~= nil and val._type ~= nil and spec.namedTypeSpec ~= nil then return IsNamedType(spec.namedTypeSpec)(val) end
+        if type(val) == "table" and spec.constraintSpec ~= nil then return AnyMatching(spec)(val) end
+        if type(val) == "table" and spec.structSpec ~= nil then return IsStruct(spec)(val) end
+        if type(val) == "table" and val ~= nil and val._type ~= nil and spec.namedTypeSpec ~= nil then return IsNamedType(spec)(val) end
     end
     return false
 end
@@ -151,5 +167,6 @@ println = function(a)
     return a
 end
 
+-- print(IsType({a = "A", b = 3}, {constraintSpec = {a = IsString}}))
 -- print(IsFunction(3)(function(a, b, c) return 0 end))
 -- print(IsType({_type = "Tup", a = "A", b = 3, _args = {"A", 3}}, {namedTypeSpec = {name = "Tup", args = {IsString, Choice({IsInt, IsBool})}}}))
