@@ -357,11 +357,11 @@ typeDeclParser = (\pos lhs def -> StructDef lhs def pos)
     <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> annotationParser)
 
 newTypeDeclParser :: Parser Decl
-newTypeDeclParser = (\pos lhs@(LhsIdentifer id _) args stc -> NewTypeDecl lhs (NewTypeAnnotation id args stc) pos)
+newTypeDeclParser = (\pos lhs@(LhsIdentifer id _) args vs -> NewTypeDecl lhs (NewTypeAnnotation id args (Map.fromList $ zip vs args)) pos)
     <$> getSourcePos
     <*> (keyword Newtype *> spaces *> lhsBigId <* spaces)
     <*> tuple const annotationParser
-    <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> structParser annotationParser const)
+    <*> (spaces *> Text.Megaparsec.Char.string "=" *> spaces *> tuple const lhsLittleId)
 
 accessAssignParser :: Parser Decl
 accessAssignParser = (\(Access n p pos) rhs -> Assign (LhsAccess n p pos) rhs pos)

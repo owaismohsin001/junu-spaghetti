@@ -10,8 +10,8 @@ function Either(f1, f2)
     end
 end
 
-function Choice(fs) return
-    function(a)
+function Choice(fs) 
+    return function(a)
         for _, f in ipairs(fs) do
             if f(a) then return true end
         end
@@ -25,13 +25,62 @@ function tablelength(T)
     return count
 end
 
-function IsStruct(spec, struct)
-    if tablelength(spec) ~= tablelength(struct) then return false end
-    for k, v in pairs(struct) do
-        if spec[k] == nil then return false end
-        if not spec[k](v) then return false end
+function IsStruct(spec)
+    local spec = spec.structSpec
+    return function(struct)
+        if spec == nil then return false end
+        if tablelength(spec) ~= tablelength(struct) then return false end
+        for k, v in pairs(struct) do
+            if spec[k] == nil then return false end
+            if not spec[k](v) then return false end
+        end
+        return true
     end
-    return true
+end
+
+function IsNamedType(spec)
+    local spec = spec.namedTypeSpec
+    return function(typ)
+        if spec == nil then return false end
+        if typ._type ~= spec.name then return false end
+        if tablelength(spec.args) ~= tablelength(typ._args) then return false end
+        for k, v in ipairs(typ._args) do
+            if spec.args[k] == nil then return false end
+            if not spec.args[k](v) then return false end
+        end
+        return true
+    end
+end
+
+function getArgs(fun)
+    local args = {}
+    local hook = debug.gethook()
+    
+    local argHook = function( ... )
+        local info = debug.getinfo(3)
+        if 'pcall' ~= info.name then return end
+    
+        for i = 1, math.huge do
+            local name, value = debug.getlocal(2, i)
+            if '(*temporary)' == name or name == nil then
+                debug.sethook(hook)
+                error('')
+                return
+            end
+            table.insert(args,name)
+        end
+    end
+    
+    debug.sethook(argHook, "c")
+    pcall(fun)
+    
+    return args
+end
+
+function IsFunction(argNum)
+    return function(f)
+        return tablelength(getArgs(f)) == argNum
+    end
 end
 
 function IsType(val, spec)
@@ -41,7 +90,8 @@ function IsType(val, spec)
     if type(spec) == "function" then return spec(val) end
     if type(spec) == "table" then
         if type(val) == "function" and spec.functionSpec ~= nil then return true end
-        if type(val) == "table" and spec.structSpec ~= nil then return IsStruct(spec.structSpec, val) end
+        if type(val) == "table" and spec.structSpec ~= nil then return IsStruct(spec.structSpec)(val) end
+        if type(val) == "table" and val ~= nil and val._type ~= nil and spec.namedTypeSpec ~= nil then return IsNamedType(spec.namedTypeSpec)(val) end
     end
     return false
 end
@@ -52,7 +102,7 @@ gt = function(a, b) return a>b end
 gte = function(a, b) return a>=b end
 lt = function(a, b) return a<b end
 lte = function(a, b) return a<=b end
-add = function(a, b) return a+b end
+add = function(a, b) return type(a) == "string" and a .. b or a+b end
 sub = function(a, b) return a-b end
 mul = function(a, b) return a*b end
 div = function(a, b) return a/b end
@@ -60,4 +110,46 @@ mod = function(a, b) return math.mod(a, b) end
 anded = function(a, b) return a and b end
 ored = function(a, b) return a or b end
 
--- print(IsType({a = "nu", b = 1}, {structSpec = {a = IsString, b = Choice({IsBool, IsInt})}}))
+write = function(a)
+    if type(a) == "table" then
+        if a._type ~= nil then 
+            io.write(a._type)
+            io.write("(")
+            for _, v in pairs(a._args) do
+                write(v)
+                io.write(", ")
+            end
+            io.write(")")
+            return
+        end
+        io.write("{")
+        for k, v in pairs(a) do
+            io.write(k)
+            io.write(": ")
+            write(v)
+            io.write(", ")
+        end
+        io.write("}")
+        return
+    end
+    io.write(tostring(a))
+end
+
+function duplicate(obj, seen)
+    if type(obj) ~= 'table' then return obj end
+    if seen and seen[obj] then return seen[obj] end
+    local s = seen or {}
+    local res = setmetatable({}, getmetatable(obj))
+    s[obj] = res
+    for k, v in pairs(obj) do res[duplicate(k, s)] = duplicate(v, s) end
+    return res
+end
+
+println = function(a)
+    write(a)
+    io.write("\n")
+    return a
+end
+
+-- print(IsFunction(3)(function(a, b, c) return 0 end))
+-- print(IsType({_type = "Tup", a = "A", b = 3, _args = {"A", 3}}, {namedTypeSpec = {name = "Tup", args = {IsString, Choice({IsInt, IsBool})}}}))

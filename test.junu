@@ -3,7 +3,7 @@ type Moo = {name: String, age: Int, male: Bool, pet: Pet}
 type Person = {name: String, age: Int, male: Bool, pet: Pet, parent: Nil | Person}
 type Date = {month: Int, weekday: Int, year: Int}
 type Nil = {}
-newtype Tup(a{}, b{}) = {a: a{}, b: b{}}
+newtype Tup(a{}, b{}) = (a, b)
 
 let s = Tup(1, true)
 let x = s.a
@@ -73,7 +73,7 @@ let modifyAge = (person: Person, age: Int) => {
 }
 
 let st = {name: "Ameer", age: 10, male: true, pet: {species: "Cat", name: "Tom", color: "White"}, parent: {}}
-st.parent = st
+st.parent = duplicate(st)
 
 let nm1 = changeCatName(st, "Molly")
 let ag1 = modifyAge(st, st.age + 1)

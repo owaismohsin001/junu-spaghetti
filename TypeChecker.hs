@@ -884,7 +884,9 @@ sourcePos = SourcePos "core" (mkPos 0) (mkPos 0)
 
 baseMapping = Map.fromList $ map (second (Finalizeable True)) [
     (LhsIdentifer "add" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
-    (LhsIdentifer "print" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
+    (LhsIdentifer "println" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
+    (LhsIdentifer "duplicate" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
+    (LhsIdentifer "write" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (StructAnnotation Map.empty)),
     (LhsIdentifer "sub" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mod" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mul" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
