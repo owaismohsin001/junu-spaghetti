@@ -40,11 +40,8 @@ end
 
 function AnyMatching(spec)
     local spec = spec.constraintSpec
-    print("iudni")
     return function(struct)
-        print('indiu')
         if spec == nil then return false end
-        print('ijdni')
         for k, f in pairs(spec) do
             if struct[k] == nil then return false end
             if not f(struct[k]) then return false end
