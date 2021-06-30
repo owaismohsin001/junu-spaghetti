@@ -158,6 +158,23 @@ function duplicate(obj, seen)
     return res
 end
 
+function newOpenFunction() 
+    local t = {}
+    function f(t, ...)
+        for _, pair in pairs(t) do
+            pred, fn = unpack(pair)
+            if pred(...) then return fn(...) end
+        end
+        print("oidoid")
+        return nil
+    end
+    setmetatable(t, {__call = f})
+    return t
+end
+function newOpenInstance(fTable, pred, body)
+    table.insert(fTable, {pred, body})
+end
+
 println = function(a)
     write(a)
     io.write("\n")

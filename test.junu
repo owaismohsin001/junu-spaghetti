@@ -5,6 +5,8 @@ type Date = {month: Int, weekday: Int, year: Int}
 type Nil = {}
 newtype Tup(a{}, b{}) = (a, b)
 
+println("\n\n\nProgram begins: \n")
+
 let s = Tup(1, true)
 let x = s.a
 
@@ -40,6 +42,7 @@ mutu1 = (a: Int, b: Int) => Int {
 }
 
 mutu2 = (n: Int, a: Bool) => Int {
+    if b { return 1 }
     return mutu1(n, n+1)
 }
 
@@ -78,6 +81,9 @@ st.parent = duplicate(st)
 let nm1 = changeCatName(st, "Molly")
 let ag1 = modifyAge(st, st.age + 1)
 
+write("st is: ")
+println(st)
+
 open setName(t{}, String, a{.pet: b{.name: t{}}}) => b{.name: t{}} for a{.pet: b{.name: t{}}}
 
 impl setName(s: String, area: String, person: Person) => {
@@ -95,7 +101,10 @@ impl setName(i: Int, area: String, intkeeper: {pet: {name: Int}}) => {
     return intkeeper.pet
 } for {pet: {name: Int}}
 
-let sn = setName("Ameer", "Collatz", {pet: st})
+let sn = setName("Junu", "Collatz", {pet: st})
+
+write("sn is: ")
+println(sn)
 
 open fi(a{}) => (a{}) -> a{} for a{}
 
@@ -123,6 +132,9 @@ let btool = fn({n: false, a: 4, x: "Hello"}, true)
 
 let mlres = swapML(Tup(st, Tup(1, st.pet)))
 
+write("mlres is: ")
+println(mlres)
+
 let identity = (a: x{}) => { return a }
 
 open fst(s{.a: a{}, .b: b{}}) => a{} for s{.a: a{}, .b: b{}}
@@ -134,11 +146,17 @@ impl fst(s: Tup(a{}, b{})) => {
 let snd = (s: Tup(l{}, r{})) => fst(swapML(s))
 let tres = snd(s)
 
+write("tres is: ")
+println(tres)
+
 let idresf = (s: Tup(q{}, r{})) => identity(apply(identity, swapG(s, (a: oi{}, b: fi{}) => {
     return Tup(a, b)
 })))
 
 let idres = idresf(s)
+
+write("idres is: ")
+println(idres)
 
 let ftr = (a: String, b: {name: String, species: String} | Pet | Person) => String {
     if b notis Person {

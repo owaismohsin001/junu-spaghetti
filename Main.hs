@@ -11,7 +11,9 @@ import Data.List
 import Nodes
 import System.Environment   
 import Data.Char
+import Data.Either
 import TypeChecker
+import Data.Maybe
 import System.Process
 
 generateLhsLua (LhsIdentifer id _) = id
@@ -22,8 +24,13 @@ generateLuaDecl (Decl lhs rhs _ _) = "local " ++ generateLhsLua lhs ++ " = " ++ 
 generateLuaDecl (Assign lhs rhs _) = generateLhsLua lhs ++ " = " ++ generateLua rhs
 generateLuaDecl (FunctionDecl lhs _ _) = "local " ++ generateLhsLua lhs
 generateLuaDecl (StructDef lhs ann _) = "Is" ++ generateLhsLua lhs ++ " = " ++ generateLuaTypes ann
-generateLuaDecl (OpenFunctionDecl lhs _ _) = "local " ++ generateLhsLua lhs
-generateLuaDecl (ImplOpenFunction lhs _ _ _ _ _) = "local " ++ generateLhsLua lhs
+generateLuaDecl (OpenFunctionDecl lhs _ _) = generateLhsLua lhs ++ " = newOpenFunction()"
+generateLuaDecl (ImplOpenFunction lhs args _ body _ pos) = 
+    "newOpenInstance(" ++ show lhs ++ 
+    ", function(" ++ intercalate ", " (map (show . fst) args) ++ ") return " ++
+    intercalate " and " (map (\(lhs, ann) -> generateLua $ CastNode lhs ann pos) args) ++ 
+    " end, function(" ++ intercalate ", " (map (show . fst) args) ++ ")\n" ++ 
+    indent (intercalate "\n" $ map generateLua body) ++ "\nend)"
 generateLuaDecl (NewTypeDecl lhs (NewTypeAnnotation id args mp) _) = 
     "function " ++ id ++ "(" ++ intercalate ", " genArgs ++ ") return { _type = \"" ++ id ++ "\", _args = {" ++ intercalate ", " genArgs ++ "}, " ++ intercalate ", " (zipWith (\k v -> show k ++ " = " ++ v) (map fst (Map.toList mp)) genArgs) ++ "} end" where 
         genArgs = map (("x" ++) . show) [1 .. length args]
@@ -103,8 +110,9 @@ main = do
     case parseFile fn text of
         Right (ms, ns, (usts, as)) -> do
             printUsts usts *> print (f as)
-            writeFile (replaceExtenstion fn "lua") $ "require 'runtime'\n\n" ++ intercalate "" (map (forwardDeclare Lua) (ms++ns)) ++ "\n\n" ++ intercalate "\n" (map (generate Lua) (ms++ns))
+            writeFile (replaceExtenstion fn "lua") $ "require 'runtime'\n\n" ++ intercalate "" (map (forwardDeclare Lua) nodes) ++ "\n\n" ++ intercalate "\n" (map (generate Lua) nodes)
             invoke Lua $ replaceExtenstion fn "lua"
+            where nodes = ms ++ ns
         Left a -> putStrLn a
     where 
         p (LhsIdentifer k _) _
