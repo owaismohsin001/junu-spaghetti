@@ -20,6 +20,7 @@ data Annotation =
     Annotation String
     | AnnotationLiteral String
     | GenericAnnotation String [Constraint]
+    | RigidAnnotation String [Constraint]
     | FunctionAnnotation [Annotation] Annotation 
     | StructAnnotation (Map.Map Lhs Annotation)
     | OpenFunctionAnnotation [Annotation] Annotation Annotation [Annotation]
@@ -31,6 +32,7 @@ data AnnotationNoImpl =
     AnnotationNoImpl String
     | AnnotationLiteralNoImpl String
     | GenericAnnotationNoImpl String [Constraint]
+    | RigidAnnotationNoImpl String [Constraint]
     | FunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl 
     | StructAnnotationNoImpl (Map.Map Lhs AnnotationNoImpl)
     | OpenFunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl AnnotationNoImpl
@@ -42,6 +44,7 @@ data AnnotationNoImpl =
 toAnnotationNoImpl :: Annotation -> AnnotationNoImpl
 toAnnotationNoImpl (Annotation a) = AnnotationNoImpl a
 toAnnotationNoImpl (AnnotationLiteral a) = AnnotationLiteralNoImpl a
+toAnnotationNoImpl (RigidAnnotation a b) = RigidAnnotationNoImpl a b
 toAnnotationNoImpl (GenericAnnotation a b) = GenericAnnotationNoImpl a b
 toAnnotationNoImpl (FunctionAnnotation a b) = FunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b)
 toAnnotationNoImpl (StructAnnotation map) = StructAnnotationNoImpl (Map.map toAnnotationNoImpl map)
@@ -57,6 +60,7 @@ instance Show Annotation where
     show (Annotation id) = id
     show (AnnotationLiteral id) = id
     show (FunctionAnnotation anns an) = "(" ++ intercalate ", " (map show anns) ++ ") -> " ++ show an
+    show (RigidAnnotation id consts) = "rigid " ++ id ++ "{" ++ intercalate ", " (map show consts) ++ "}"
     show (GenericAnnotation id consts) = id ++ "{" ++ intercalate ", " (map show consts) ++ "}"
     show (StructAnnotation anns) = 
         "{" ++ intercalate ", " (Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) anns) ++ "}"

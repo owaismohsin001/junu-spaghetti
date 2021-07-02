@@ -68,6 +68,28 @@ getAnnotationState k = get >>= \(_, ((_, anns), _)) -> return (fromFinalizeable 
 getAnnotationStateFinalizeable :: Show a => Lhs -> AnnotationState (Annotations a) (Result String a)
 getAnnotationStateFinalizeable k = get >>= \(_, ((_, anns), _)) -> return (getAnnotation k anns)
 
+rigidizeTypeConstraints :: UserDefinedTypes -> Constraint -> Constraint
+rigidizeTypeConstraints usts (ConstraintHas lhs cs) = ConstraintHas lhs $ rigidizeTypeConstraints usts cs 
+rigidizeTypeConstraints usts (AnnotationConstraint ann) = AnnotationConstraint $ rigidizeTypeVariables usts ann
+
+rigidizeTypeVariables :: UserDefinedTypes -> Annotation -> Annotation
+rigidizeTypeVariables usts fid@(GenericAnnotation id cns) = RigidAnnotation id cns
+rigidizeTypeVariables usts fid@RigidAnnotation{} = fid
+rigidizeTypeVariables usts id@AnnotationLiteral{} = id
+rigidizeTypeVariables usts fid@(Annotation id) = fromMaybe (error $ noTypeFound id sourcePos) (Map.lookup (LhsIdentifer id sourcePos) usts)
+rigidizeTypeVariables usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id (map (rigidizeTypeVariables usts) anns) (Map.map (rigidizeTypeVariables usts) annMap)
+rigidizeTypeVariables usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id (map (rigidizeTypeVariables usts) anns)
+rigidizeTypeVariables usts (FunctionAnnotation args ret) = FunctionAnnotation (map (rigidizeTypeVariables usts) args) (rigidizeTypeVariables usts ret)
+rigidizeTypeVariables usts (StructAnnotation ms) = StructAnnotation $ Map.map (rigidizeTypeVariables usts) ms
+rigidizeTypeVariables usts (TypeUnion ts) = TypeUnion $ Set.map (rigidizeTypeVariables usts) ts
+rigidizeTypeVariables usts OpenFunctionAnnotation{} = error "Can't use rigidizeVariables with open functions"
+
+rigidizeImmediateState :: AnnotationState (Annotations (Finalizeable Annotation)) ()
+rigidizeImmediateState = do
+    (a, ((b, Annotations mp rest), usts)) <- get
+    let new_mp = Map.map (\(Finalizeable t a) -> Finalizeable t $ rigidizeTypeVariables usts a) mp
+    put (a, ((b, Annotations new_mp rest), usts))
+
 pushScope :: Show a => AnnotationState (Annotations a) ()
 pushScope = (\(a, ((i, mp), b)) -> put (a, ((i, Annotations Map.empty $ Just mp), b))) =<< get
 
@@ -146,6 +168,7 @@ firstInferrableReturn pos (_:xs) = firstInferrableReturn pos xs
 
 isGeneric :: P.SourcePos -> UserDefinedTypes -> Annotation -> Bool
 isGeneric pos mp GenericAnnotation{} = True
+isGeneric pos mp RigidAnnotation{} = True
 isGeneric pos mp AnnotationLiteral{} = False
 isGeneric pos mp (Annotation ann) = maybe False (isGeneric pos mp) (Map.lookup (LhsIdentifer ann pos) mp)
 isGeneric pos mp (FunctionAnnotation args ret) = any (isGeneric pos mp) (ret:args)
@@ -190,6 +213,12 @@ substituteVariables pos defs rels mp usts fid@(GenericAnnotation id cns) =
             Right a -> Right a
             Left _ -> Right x
         g = mapM (substituteConstraints pos defs rels mp usts) cns >>= f . GenericAnnotation id
+substituteVariables pos defs rels mp usts (RigidAnnotation id cns) = 
+    -- Still thinking about this one
+    case substituteVariables pos defs rels mp usts $ GenericAnnotation id cns of
+        Right (GenericAnnotation id cns) -> Right $ RigidAnnotation id cns
+        Right a -> Right a
+        Left err -> Left err
 substituteVariables pos defs rels mp usts id@AnnotationLiteral{} = Right id
 substituteVariables pos defs rels mp usts fid@(Annotation id) = maybe (Left $ noTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
 substituteVariables pos defs rels mp usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id <$> mapM (substituteVariables pos defs rels mp usts) anns <*> mapM (substituteVariables pos defs rels mp usts) annMap
@@ -205,6 +234,7 @@ collectGenericConstraints usts (AnnotationConstraint ann) = collectGenenrics ust
 
 collectGenenrics :: UserDefinedTypes -> Annotation -> Set.Set Annotation
 collectGenenrics usts fid@(GenericAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraints usts) cns)
+collectGenenrics usts fid@(RigidAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraints usts) cns)
 collectGenenrics usts AnnotationLiteral{} = Set.empty
 collectGenenrics usts fid@(Annotation ident) = maybe (error "Run your passes in order. You should know that this doesn't exists by now") (collectGenenrics usts) (Map.lookup (LhsIdentifer ident (SourcePos "" (mkPos 0) (mkPos 0))) usts)
 collectGenenrics usts (NewTypeAnnotation id anns annMap) = Set.unions (Set.map (collectGenenrics usts) (Set.fromList anns)) `Set.union` foldl1 Set.union (map (collectGenenrics usts) (Map.elems annMap))
@@ -348,6 +378,9 @@ specifyInternal :: SourcePos
     -> Annotation
     -> SubstituteState (Either String Annotation)
 specifyInternal pos defs a@AnnotationLiteral{} b@AnnotationLiteral{} = (\mp -> return $ sameTypes pos mp a b *> Right a) =<< gets (snd . snd)
+specifyInternal pos defs a@(RigidAnnotation id1 cns1) b@(RigidAnnotation id2 cns2) 
+    | id1 == id2 = (b <$) <$> (sequence <$> mapM (applyConstraintState pos defs b) cns1)
+    | otherwise = return . Left $ unmatchedType a b pos
 specifyInternal pos defs a@(GenericAnnotation id cns) b@(AnnotationLiteral ann) = do
     mp <- getTypeMap
     ann <- addTypeVariable pos defs a b
@@ -1051,6 +1084,11 @@ sameTypesGenericCrt gs crt pos mp b (Annotation id) =
 sameTypesGenericCrt tgs@(_, sensitive, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
     | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = Left $ "Expected " ++ show a ++ " but got " ++ show b
     | otherwise = if id1 == id2 then zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a else failout crt a b pos
+sameTypesGenericCrt gs crt pos mp a@(GenericAnnotation id1 cs1) b@(RigidAnnotation id2 cs2) = sameTypesGenericCrt gs crt pos mp (RigidAnnotation id1 cs1) (RigidAnnotation id2 cs2) $> b
+sameTypesGenericCrt gs crt pos mp a@(RigidAnnotation id1 cs1) b@(GenericAnnotation id2 cs2) = sameTypesGenericCrt gs crt pos mp (RigidAnnotation id1 cs1) (RigidAnnotation id2 cs2) $> b
+sameTypesGenericCrt tgs@(_, sensitive, gs) crt pos mp a@(RigidAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
+    | id1 == id2 = zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a 
+    | otherwise = failout crt a b pos
 sameTypesGenericCrt tgs@(_, sensitive, gs) crt pos mp a@(GenericAnnotation _ acs) b = 
     if sensitive then 
         mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs *> success crt b
@@ -1281,6 +1319,7 @@ consistentTypes (FunctionDef args ret body pos) =
             let program = Program body
             let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True ret):map (second (Finalizeable True)) args) (Just ans)) mp), mp))
             put ans'
+            rigidizeImmediateState
             xs <- sequence <$> mapM consistentTypes body
             s <- getAnnotationState (LhsIdentifer "return" pos)
             put scope
