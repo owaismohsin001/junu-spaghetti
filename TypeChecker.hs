@@ -181,25 +181,26 @@ isGeneric pos mp OpenFunctionAnnotation{} = False
 firstPreferablyDefinedRelation pos defs mp rs k =
     case Map.lookup k rs of
         Just s -> 
-            if notnull stf then Right $ Set.elemAt 0 $ preferablyInDefs stf 
-            else if notnull deftf then Right $ Set.elemAt 0 $ preferablyInDefs deftf  
+            if notnull stf then Right . defResIfNull $ inDefs stf 
+            else if notnull deftf then Right . defResIfNull $ inDefs deftf  
             else case defRes of
                     Right x -> Right x
-                    Left _ -> Right $ Set.elemAt 0 $ preferablyInDefs s
+                    Left _ -> Right $ Set.elemAt 0 $ if notnull $ inDefs s then inDefs s else s
             where 
                 notnull = not . Set.null
                 deftf = Set.filter (`Set.member` defs) s
                 stf = Set.filter (\x -> isJust (Map.lookup x mp)) s
 
-                preferablyInDefs s 
-                    | Set.null (Set.filter (`Set.member` defs) s) = s
-                    | otherwise = Set.filter (`Set.member` defs) s
+                defResIfNull s = if notnull s then Set.elemAt 0 s else case defRes of
+                    Right x -> x
+                    Left _ -> Set.elemAt 0 s
         Nothing -> defRes
         where 
+            inDefs s = Set.filter (`Set.member` defs) s
             defRes = 
                 case Map.elems $ Map.filter (\s -> Set.member k s && not (Set.disjoint defs s)) $ Map.mapWithKey Set.insert rs of
                     [] -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
-                    xs -> Right $ Set.elemAt 0 $ head xs
+                    xs -> Right $ Set.elemAt 0 $ inDefs $ head xs
 
 substituteConstraints :: SourcePos -> Set.Set Annotation -> TypeRelations -> Map.Map Annotation Annotation -> UserDefinedTypes -> Constraint -> Either String  Constraint
 substituteConstraints pos defs rels mp usts (ConstraintHas lhs cs) = ConstraintHas lhs <$> substituteConstraints pos defs rels mp usts cs 
@@ -294,7 +295,9 @@ updateSingleRelation pos defs r = do
     case Map.lookup r rs of
         Just rl -> do
             (\case 
-                Right _ -> maybe (return $ Right ()) (\a -> f r a $> Right ()) fnv
+                Right _ -> do
+                    put (a, ((Map.insert r (getAllRelationsInvolving r rs) rs, mp), usts))
+                    maybe (return $ Right ()) (\a -> f r a $> Right ()) fnv
                 Left err -> return $ Left err) . sequence =<< mapM (uncurry f) mls'
             where 
             m = Map.filterWithKey (\k _ -> k `Set.member` rl) mp
@@ -308,6 +311,8 @@ updateSingleRelation pos defs r = do
             firstNonUnderscore [] = Nothing 
             firstNonUnderscore ((_, AnnotationLiteral "_"):xs) = firstNonUnderscore xs
             firstNonUnderscore ((_, ann):xs) = Just ann
+
+            getAllRelationsInvolving r rs = Set.unions $ Map.elems $ Map.filter (Set.member r) $ Map.mapWithKey Set.insert rs
         Nothing -> return . Left $ "No relation on " ++ show r ++ " has been established"
 
 updateRelations :: P.SourcePos -> Set.Set Annotation -> SubstituteState (Either String ())
@@ -673,6 +678,7 @@ getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) =
     f :: UserDefinedTypes -> P.SourcePos -> Node -> Annotation -> Annotation -> Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
     f mp pos acc whole expected given = case whole of
             g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
+            g@(RigidAnnotation _ cns) -> return $ genericHas pos g p cns
             TypeUnion{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
             NewTypeInstanceAnnotation{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
             StructAnnotation ps -> case sameTypesImpl given pos mp expected given of 
@@ -884,6 +890,7 @@ getAssumptionType (Access st p pos) = do
     f :: UserDefinedTypes -> Either String Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
     f mp = \case
             Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
+            Right g@(RigidAnnotation _ cns) -> return $ genericHas pos g p cns
             Right (TypeUnion st) -> ((\x -> head <$> mapM (sameTypes pos mp (head x)) x) =<<) <$> x where 
                 x = sequence <$> mapM (\x -> f mp =<< getTypeState x pos) stl
                 stl = Set.toList st
@@ -1298,6 +1305,7 @@ consistentTypes (Access st p pos) = do
     f :: UserDefinedTypes -> Either String Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
     f mp = \case
             Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
+            Right g@(RigidAnnotation _ cns) -> return $ genericHas pos g p cns
             Right (TypeUnion st) -> ((\x -> head <$> mapM (sameTypes pos mp (head x)) x) =<<) <$> x where 
                 x = sequence <$> mapM (\x -> f mp =<< getTypeState x pos) stl
                 stl = Set.toList st
@@ -1335,6 +1343,7 @@ consistentTypes (FunctionDef args ret body pos) =
             let program = Program body
             let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True)) args) (Just old_ans)) mp), mp))
             put ans
+            rigidizeImmediateState
             xs <- sequence <$> mapM consistentTypes body
             (_, ((i, new_ans), _)) <- get
             case xs of
