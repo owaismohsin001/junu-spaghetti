@@ -73,7 +73,7 @@ rigidizeTypeConstraints usts (ConstraintHas lhs cs) = ConstraintHas lhs $ rigidi
 rigidizeTypeConstraints usts (AnnotationConstraint ann) = AnnotationConstraint $ rigidizeTypeVariables usts ann
 
 rigidizeTypeVariables :: UserDefinedTypes -> Annotation -> Annotation
-rigidizeTypeVariables usts fid@(GenericAnnotation id cns) = RigidAnnotation id cns
+rigidizeTypeVariables usts fid@(GenericAnnotation id cns) = RigidAnnotation id $ map (rigidizeTypeConstraints usts) cns
 rigidizeTypeVariables usts fid@RigidAnnotation{} = fid
 rigidizeTypeVariables usts id@AnnotationLiteral{} = id
 rigidizeTypeVariables usts fid@(Annotation id) = fromMaybe (error $ noTypeFound id sourcePos) (Map.lookup (LhsIdentifer id sourcePos) usts)
@@ -84,11 +84,21 @@ rigidizeTypeVariables usts (StructAnnotation ms) = StructAnnotation $ Map.map (r
 rigidizeTypeVariables usts (TypeUnion ts) = TypeUnion $ Set.map (rigidizeTypeVariables usts) ts
 rigidizeTypeVariables usts OpenFunctionAnnotation{} = error "Can't use rigidizeVariables with open functions"
 
-rigidizeImmediateState :: AnnotationState (Annotations (Finalizeable Annotation)) ()
-rigidizeImmediateState = do
-    (a, ((b, Annotations mp rest), usts)) <- get
-    let new_mp = Map.map (\(Finalizeable t a) -> Finalizeable t $ rigidizeTypeVariables usts a) mp
-    put (a, ((b, Annotations new_mp rest), usts))
+unrigidizeTypeConstraints :: UserDefinedTypes -> Constraint -> Constraint
+unrigidizeTypeConstraints usts (ConstraintHas lhs cs) = ConstraintHas lhs $ rigidizeTypeConstraints usts cs 
+unrigidizeTypeConstraints usts (AnnotationConstraint ann) = AnnotationConstraint $ rigidizeTypeVariables usts ann
+
+unrigidizeTypeVariables :: UserDefinedTypes -> Annotation -> Annotation
+unrigidizeTypeVariables usts fid@(GenericAnnotation id cns) = fid
+unrigidizeTypeVariables usts fid@(RigidAnnotation id cns) = GenericAnnotation id $ map (unrigidizeTypeConstraints usts) cns
+unrigidizeTypeVariables usts id@AnnotationLiteral{} = id
+unrigidizeTypeVariables usts fid@(Annotation id) = fromMaybe (error $ noTypeFound id sourcePos) (Map.lookup (LhsIdentifer id sourcePos) usts)
+unrigidizeTypeVariables usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id (map (unrigidizeTypeVariables usts) anns) (Map.map (unrigidizeTypeVariables usts) annMap)
+unrigidizeTypeVariables usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id (map (unrigidizeTypeVariables usts) anns)
+unrigidizeTypeVariables usts (FunctionAnnotation args ret) = FunctionAnnotation (map (unrigidizeTypeVariables usts) args) (unrigidizeTypeVariables usts ret)
+unrigidizeTypeVariables usts (StructAnnotation ms) = StructAnnotation $ Map.map (unrigidizeTypeVariables usts) ms
+unrigidizeTypeVariables usts (TypeUnion ts) = TypeUnion $ Set.map (unrigidizeTypeVariables usts) ts
+unrigidizeTypeVariables usts OpenFunctionAnnotation{} = error "Can't use rigidizeVariables with open functions"
 
 pushScope :: Show a => AnnotationState (Annotations a) ()
 pushScope = (\(a, ((i, mp), b)) -> put (a, ((i, Annotations Map.empty $ Just mp), b))) =<< get
@@ -817,7 +827,7 @@ getAssumptionType (FunctionDef args ret body pos) =
         Nothing -> do
             whole_old_ans@(a, ((i, old_ans), mp)) <- get
             let program = Program body
-            let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True)) args) (Just old_ans)) mp), mp))
+            let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just old_ans)) mp), mp))
             put ans
             mapM_ getAssumptionType body
             (new_ans, _) <- gets snd
@@ -830,7 +840,7 @@ getAssumptionType (FunctionDef args ret body pos) =
                             else typ
                             ) . isSearchable
                     put whole_old_ans
-                    return (makeFunAnnotation args <$> ntyp)
+                    return (makeFunAnnotation args . unrigidizeTypeVariables mp <$> ntyp)
                 Left err -> return . Left $ err
     where
         isSearchable Annotation{} = False
@@ -1325,15 +1335,14 @@ consistentTypes (FunctionDef args ret body pos) =
             (a, ((i, ans), mp)) <- get
             mp <- getTypeMap
             let program = Program body
-            let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True ret):map (second (Finalizeable True)) args) (Just ans)) mp), mp))
+            let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True $ rigidizeTypeVariables mp ret):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just ans)) mp), mp))
             put ans'
-            rigidizeImmediateState
             xs <- sequence <$> mapM consistentTypes body
             s <- getAnnotationState (LhsIdentifer "return" pos)
             put scope
             case s of
                 Right ret' -> case xs of
-                    Right _ -> return (sameTypes pos mp (makeFunAnnotation args ret) (makeFunAnnotation args ret'))
+                    Right _ -> return (sameTypes pos mp (makeFunAnnotation args $ unrigidizeTypeVariables mp ret) (makeFunAnnotation args $ unrigidizeTypeVariables mp ret'))
                     Left err -> return . Left $ err
                 Left err -> return $ Left err
         Nothing -> do
@@ -1341,9 +1350,8 @@ consistentTypes (FunctionDef args ret body pos) =
             finalizeAnnotationState
             (a, ((i, old_ans), mp)) <- get
             let program = Program body
-            let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True)) args) (Just old_ans)) mp), mp))
+            let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just old_ans)) mp), mp))
             put ans
-            rigidizeImmediateState
             xs <- sequence <$> mapM consistentTypes body
             (_, ((i, new_ans), _)) <- get
             case xs of
@@ -1353,7 +1361,7 @@ consistentTypes (FunctionDef args ret body pos) =
                             Right (Finalizeable _ ret') -> do
                                 typ <- consistentTypes ret
                                 put scope
-                                return $ Right $ makeFunAnnotation args ret'
+                                return $ Right $ makeFunAnnotation args $ unrigidizeTypeVariables mp ret'
                             Left err -> return $ Left err
                         Left err -> return $ Left err) =<< firstInferrableReturn pos body
                 Left err -> return $ Left err
@@ -1502,7 +1510,7 @@ typeCheckedScope program =
         case runState (mapM getAssumptionType earlyReturns) (AnnotationLiteral "_", ((0, assumeProgram (Program $ earlyReturnToElse lifted) 0 types), types)) of
             (res, (a, map@(_, usts))) -> case sequence_ res of
                 Left err -> Left err 
-                Right () -> res >> Right (metProgram, earlyReturns, defineAllTypes usts $ removeFinalization as) where
+                Right () -> res >> Right (metProgram, earlyReturns, (usts, removeFinalization as)) where
                         res = sequence f
                         (_, ((_, as), _)) = s
                         (f, s) = runState (mapM consistentTypes (earlyReturnToElse lifted)) (a, map)
