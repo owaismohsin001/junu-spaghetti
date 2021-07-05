@@ -464,7 +464,7 @@ specifyInternal pos defs a@(TypeUnion as) b@(TypeUnion bs) = do
     case xs of
         Right _ -> return $ Right b
         Left err -> 
-            if Set.size as == Set.size bs || Set.null (collectGenenrics mp a) then return $ Left err 
+            if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
             else distinctUnion err (Set.toList $ collectGenenrics mp a)
     where
         f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos defs x v1) ps2
