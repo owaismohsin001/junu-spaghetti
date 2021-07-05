@@ -68,7 +68,7 @@ instance Show Annotation where
         " in {" ++ intercalate ", " (map show impls) ++ "} for " ++ show for
     show (NewTypeAnnotation n as res) = n ++ "(" ++ intercalate ", " (map show as) ++ ") = " ++ show res
     show (NewTypeInstanceAnnotation n as) = n ++ "(" ++ intercalate ", " (map show as) ++ ")"
-    show (TypeUnion as) = intercalate " | " (map show (Set.toList as))
+    show (TypeUnion as) = "(" ++ intercalate " | " (map show (Set.toList as)) ++ ")"
 
 data LhsNoPos = 
     LhsIdentiferNoPos String 

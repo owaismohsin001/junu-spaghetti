@@ -236,7 +236,7 @@ substituteVariables pos defs rels mp usts (NewTypeAnnotation id anns annMap) = N
 substituteVariables pos defs rels mp usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (substituteVariables pos defs rels mp usts) anns
 substituteVariables pos defs rels mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariables pos defs rels mp usts) args <*> substituteVariables pos defs rels mp usts ret
 substituteVariables pos defs rels mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariables pos defs rels mp usts) ms
-substituteVariables pos defs rels mp usts (TypeUnion ts) = TypeUnion . Set.fromList <$> mapM (substituteVariables pos defs rels mp usts) (Set.toList ts)
+substituteVariables pos defs rels mp usts (TypeUnion ts) = foldr1 (mergedTypeConcrete pos usts) <$> mapM (substituteVariables pos defs rels mp usts) (Set.toList ts)
 substituteVariables pos defs rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
 collectGenericConstraints :: UserDefinedTypes -> Constraint -> Set.Set Annotation
@@ -463,9 +463,19 @@ specifyInternal pos defs a@(TypeUnion as) b@(TypeUnion bs) = do
     xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
     case xs of
         Right _ -> return $ Right b
-        Left err -> return $ Left err
+        Left err -> 
+            if Set.size as == Set.size bs || Set.null (collectGenenrics mp a) then return $ Left err 
+            else distinctUnion err (Set.toList $ collectGenenrics mp a)
     where
         f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos defs x v1) ps2
+        distinctUnion err [] = return $ Left err
+        distinctUnion _ xs = do
+            c1 <- specifyInternal pos defs (head xs) (TypeUnion . Set.fromList $ take (length xs) (Set.toList as))
+            c2 <- sequence <$> zipWithM (flip (specifyInternal pos defs)) (tail xs) (drop (length xs) (Set.toList as))
+            case (c1, c2) of
+                (Right _, Right _) -> return $ Right b
+                (Left err, _) -> return $ Left err
+                (_, Left err) -> return $ Left err
 specifyInternal pos defs a b@(TypeUnion st) = do
     x <- sequence <$> mapM (flip (specifyInternal pos defs) a) stl
     case x of
@@ -656,6 +666,10 @@ listAccess n = reverse $ go n where
 
 sameTypesImpl :: Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
 sameTypesImpl TypeUnion{} = sameTypesNoUnionSpec
+sameTypesImpl (NewTypeInstanceAnnotation _ xs) = 
+    if isJust $ find isTypeUnion xs then sameTypesNoUnionSpec else sameTypes where
+    isTypeUnion TypeUnion{} = True
+    isTypeUnion _ = False
 sameTypesImpl _ = sameTypes
 
 matchingUserDefinedType :: P.SourcePos -> Set.Set Annotation -> UserDefinedTypes -> Annotation -> Maybe Annotation
