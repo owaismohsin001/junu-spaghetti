@@ -177,16 +177,30 @@ firstInferrableReturn pos ((Return a _):_) = return $ Right a
 firstInferrableReturn pos (_:xs) = firstInferrableReturn pos xs
 
 isGeneric :: P.SourcePos -> UserDefinedTypes -> Annotation -> Bool
-isGeneric pos mp GenericAnnotation{} = True
-isGeneric pos mp RigidAnnotation{} = True
-isGeneric pos mp AnnotationLiteral{} = False
-isGeneric pos mp (Annotation ann) = maybe False (isGeneric pos mp) (Map.lookup (LhsIdentifer ann pos) mp)
-isGeneric pos mp (FunctionAnnotation args ret) = any (isGeneric pos mp) (ret:args)
-isGeneric pos mp (StructAnnotation ms) = any (isGeneric pos mp) ms
-isGeneric pos mp (NewTypeAnnotation _ _ tmp) = any (isGeneric pos mp) tmp
-isGeneric pos mp (NewTypeInstanceAnnotation _ as) = any (isGeneric pos mp) as
-isGeneric pos mp (TypeUnion ts) = any (isGeneric pos mp) ts
-isGeneric pos mp OpenFunctionAnnotation{} = False
+isGeneric pos usts ann = evalState (go pos usts ann) Map.empty where
+    go :: P.SourcePos -> UserDefinedTypes -> Annotation -> State (Map.Map Annotation Bool) Bool
+    go pos mp GenericAnnotation{} = return True
+    go pos mp (RigidAnnotation _ cns) = or <$> mapM goConstraints cns where
+        goConstraints (ConstraintHas _ cn) = goConstraints cn
+        goConstraints (AnnotationConstraint ann) = go pos mp ann
+    go pos mp AnnotationLiteral{} = return False
+    go pos mp wholeAnn@(Annotation ann) = do
+        recordedAnns <- get
+        case Map.lookup wholeAnn recordedAnns of
+            Just b -> return b
+            Nothing -> case Map.lookup (LhsIdentifer ann pos) mp of
+                Just new_ann -> do
+                    put $ Map.insert wholeAnn False recordedAnns
+                    new_res <- go pos mp new_ann
+                    put $ Map.insert wholeAnn new_res recordedAnns
+                    return new_res
+                Nothing -> return False
+    go pos mp (FunctionAnnotation args ret) = or <$> mapM (go pos mp) (ret:args)
+    go pos mp (StructAnnotation ms) = or <$> mapM (go pos mp) ms
+    go pos mp (NewTypeAnnotation _ _ tmp) = or <$> mapM (go pos mp) tmp
+    go pos mp (NewTypeInstanceAnnotation _ as) = or <$> mapM (go pos mp) as
+    go pos mp (TypeUnion ts) = or <$> mapM (go pos mp) (Set.toList ts)
+    go pos mp OpenFunctionAnnotation{} = return False
 
 firstPreferablyDefinedRelation pos defs mp rs k =
     case Map.lookup k rs of
@@ -225,7 +239,6 @@ substituteVariables pos defs rels mp usts fid@(GenericAnnotation id cns) =
             Left _ -> Right x
         g = mapM (substituteConstraints pos defs rels mp usts) cns >>= f . GenericAnnotation id
 substituteVariables pos defs rels mp usts (RigidAnnotation id cns) = 
-    -- Still thinking about this one
     case substituteVariables pos defs rels mp usts $ GenericAnnotation id cns of
         Right (GenericAnnotation id cns) -> Right $ RigidAnnotation id cns
         Right a -> Right a
@@ -236,7 +249,7 @@ substituteVariables pos defs rels mp usts (NewTypeAnnotation id anns annMap) = N
 substituteVariables pos defs rels mp usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (substituteVariables pos defs rels mp usts) anns
 substituteVariables pos defs rels mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariables pos defs rels mp usts) args <*> substituteVariables pos defs rels mp usts ret
 substituteVariables pos defs rels mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariables pos defs rels mp usts) ms
-substituteVariables pos defs rels mp usts (TypeUnion ts) = foldr1 (mergedTypeConcrete pos usts) <$> mapM (substituteVariables pos defs rels mp usts) (Set.toList ts)
+substituteVariables pos defs rels mp usts (TypeUnion ts) = foldr1 (mergedTypeConcrete pos usts) . filter (not . isGeneric pos usts) <$> mapM (substituteVariables pos defs rels mp usts) (Set.toList ts)
 substituteVariables pos defs rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
 collectGenericConstraints :: UserDefinedTypes -> Constraint -> Set.Set Annotation
