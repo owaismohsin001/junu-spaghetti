@@ -473,20 +473,26 @@ specifyInternal pos defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInsta
         ) . sequence =<< zipWithM (specifyInternal pos defs) anns1 anns2
 specifyInternal pos defs a@(TypeUnion as) b@(TypeUnion bs) = do
     mp <- getTypeMap
-    xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
-    case xs of
-        Right _ -> return $ Right b
-        Left err -> 
-            if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
-            else distinctUnion err (Set.toList $ collectGenenrics mp a)
+    case (foldr1 (mergedTypeConcrete pos mp) as, foldr1 (mergedTypeConcrete pos mp) bs) of
+        (TypeUnion as, TypeUnion bs) -> do
+            xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
+            case xs of
+                Right _ -> return $ Right b
+                Left err -> 
+                    if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
+                    else distinctUnion err (Set.toList $ collectGenenrics mp a)            
+        (a, b) -> specifyInternal pos defs a b
     where
         f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos defs x v1) ps2
+        typeUnionList (TypeUnion xs) action = action $ Set.toList xs
+        typeUnionList a action = specifyInternal pos defs a b
         distinctUnion err [] = return $ Left err
         distinctUnion _ xs = do
-            c1 <- specifyInternal pos defs (head xs) (TypeUnion . Set.fromList $ take (length xs) (Set.toList as))
+            usts <- getTypeMap
+            c1 <- specifyInternal pos defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) (Set.toList as))
             c2 <- sequence <$> zipWithM (flip (specifyInternal pos defs)) (tail xs) (drop (length xs) (Set.toList as))
             case (c1, c2) of
-                (Right _, Right _) -> return $ Right b
+                (Right _, Right _) -> return $ Right $ mergedTypeConcrete pos usts b b
                 (Left err, _) -> return $ Left err
                 (_, Left err) -> return $ Left err
 specifyInternal pos defs a b@(TypeUnion st) = do
@@ -529,16 +535,16 @@ getSpecificationRules pos defs base mp a b = case fst st of
 
 
 sameTypesGenericBool gs crt pos mp a b = case sameTypesGeneric gs pos mp a b of
-                        Right _ -> True
-                        Left _ -> False
+    Right _ -> True
+    Left _ -> False
 
 sameTypesBool pos mp a b = case sameTypes pos mp a b of
-                        Right _ -> True
-                        Left _ -> False
+    Right _ -> True
+    Left _ -> False
 
 specifyTypesBool pos defs base usts a b = case specify pos defs base usts a b of
-                        Right _ -> True
-                        Left _ -> False                                     
+    Right _ -> True
+    Left _ -> False                                     
 
 isGenericAnnotation a = case a of 
     a@GenericAnnotation{} -> True
@@ -1030,9 +1036,13 @@ mergedType gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
                 Nothing -> Nothing
 mergedType gs crt pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
     case mapM_ (f mp $ Set.toList as) (Set.toList bs) of
-        Right () -> b
-        Left err -> createUnion a b
+        Right () -> foldr1 (mergedType gs crt pos mp) (Set.toList bs)
+        Left _ -> case createUnion a b of
+            TypeUnion xs -> TypeUnion $ Set.map (mergeUnions xs) xs
+            a -> a
     where
+        mergeUnions xs a = foldr1 (mergedType gs crt pos mp) $ filter (predicate a) nxs where nxs = Set.toList xs
+        predicate a b = isRight (sameTypesGenericCrt gs crt pos mp a b) || isRight (sameTypesGenericCrt gs crt pos mp b a)
         f mp ps2 v1 = join $ getFirst a b pos $ map (\x -> success crt <$> sameTypesGenericCrt gs crt pos mp x v1) ps2
 mergedType gs crt pos mp a@(TypeUnion st) b = 
     case fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGenericCrt gs crt pos mp x b) $ Set.toList st of
@@ -1069,6 +1079,7 @@ mergedType (considerUnions, sensitive, gs) crt pos mp a@(OpenFunctionAnnotation 
     FunctionAnnotation (init ls) (last ls) where
         ls = zipWith (mergedType (considerUnions, sensitive, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
+mergedType gs crt pos mp a@(RigidAnnotation id1 _) b@(RigidAnnotation id2 _) = if id1 == id2 then a else createUnion a b
 mergedType _ crt pos _ a b = createUnion a b
 
 sameTypesGenericCrt :: (Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
