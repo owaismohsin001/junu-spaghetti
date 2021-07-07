@@ -1038,7 +1038,7 @@ mergedType gs crt pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
     case mapM_ (f mp $ Set.toList as) (Set.toList bs) of
         Right () -> foldr1 (mergedType gs crt pos mp) (Set.toList bs)
         Left _ -> case createUnion a b of
-            TypeUnion xs -> TypeUnion $ Set.map (mergeUnions xs) xs
+            TypeUnion xs -> foldr1 (mergedType gs crt pos mp) $ Set.toList $ Set.map (mergeUnions xs) xs
             a -> a
     where
         mergeUnions xs a = foldr1 (mergedType gs crt pos mp) $ filter (predicate a) nxs where nxs = Set.toList xs
@@ -1079,7 +1079,9 @@ mergedType (considerUnions, sensitive, gs) crt pos mp a@(OpenFunctionAnnotation 
     FunctionAnnotation (init ls) (last ls) where
         ls = zipWith (mergedType (considerUnions, sensitive, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
-mergedType gs crt pos mp a@(RigidAnnotation id1 _) b@(RigidAnnotation id2 _) = if id1 == id2 then a else createUnion a b
+mergedType gs crt pos mp a@(RigidAnnotation id1 _) b@(RigidAnnotation id2 _) 
+    | id1 == id2 = a
+    | otherwise = createUnion a b
 mergedType _ crt pos _ a b = createUnion a b
 
 sameTypesGenericCrt :: (Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
