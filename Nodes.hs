@@ -70,6 +70,8 @@ instance Show Annotation where
     show (NewTypeInstanceAnnotation n as) = n ++ "(" ++ intercalate ", " (map show as) ++ ")"
     show (TypeUnion as) = "(" ++ intercalate " | " (map show (Set.toList as)) ++ ")"
 
+data ConsistencyPass = RefineAssumtpions | VerifyAssumptions deriving(Eq)
+
 data LhsNoPos = 
     LhsIdentiferNoPos String 
     | LhsAccessNoPos NodeNoPos LhsNoPos

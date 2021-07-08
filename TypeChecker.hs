@@ -1230,21 +1230,23 @@ accessNewType givenArgs f g fid@(LhsIdentifer id pos) = do
                 Just a -> g a
                 Nothing -> return . Left $ noTypeFound id pos
 
-consistentTypes ::  Node -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
-consistentTypes (DeclN (Decl lhs rhs _ pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
-    <$> getAnnotationState lhs <*> consistentTypes rhs <*> getTypeMap
-consistentTypes (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
-    <$> getAssumptionType (Access access prop accPos) <*> consistentTypes rhs <*> getTypeMap
-consistentTypes (DeclN (Assign lhs rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b) 
-    <$> getAnnotationState lhs <*> consistentTypes rhs <*> getTypeMap
-consistentTypes (DeclN (FunctionDecl lhs ann pos)) = do
+consistentTypesPass :: ConsistencyPass -> Node -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
+consistentTypesPass VerifyAssumptions (DeclN (Decl lhs rhs _ pos)) = (\a b m -> mergedTypeConcrete pos m <$> a <*> b)
+    <$> getAnnotationState lhs <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
+consistentTypesPass RefineAssumtpions (DeclN (Decl lhs rhs _ pos)) = getAssumptionType rhs >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
+consistentTypesPass p (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
+    <$> getAssumptionType (Access access prop accPos) <*> consistentTypesPass p rhs <*> getTypeMap
+consistentTypesPass VerifyAssumptions (DeclN (Assign lhs rhs pos)) = (\a b m -> mergedTypeConcrete pos m <$> a <*> b) 
+    <$> getAnnotationState lhs <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
+consistentTypesPass RefineAssumtpions (DeclN (Assign lhs rhs pos)) = getAssumptionType rhs >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
+consistentTypesPass p (DeclN (FunctionDecl lhs ann pos)) = do
     m <- getTypeMap
     l <- getAnnotationState lhs
     case l of
-        Right l -> return $ sameTypes pos m ann l 
+        Right l -> if p == VerifyAssumptions then return $ sameTypes pos m ann l else makeUnionIfNotSame pos (Right ann) (getAnnotationState lhs) lhs
         Left err -> return $ Left err
-consistentTypes (DeclN (ImplOpenFunction lhs args (Just ret) exprs _ pos)) = consistentTypes $ FunctionDef args (Just ret) exprs pos
-consistentTypes (DeclN (ImplOpenFunction lhs args Nothing exprs implft pos)) = do
+consistentTypesPass p (DeclN (ImplOpenFunction lhs args (Just ret) exprs _ pos)) = consistentTypesPass p $ FunctionDef args (Just ret) exprs pos
+consistentTypesPass p (DeclN (ImplOpenFunction lhs args Nothing exprs implft pos)) = do
     a <- getAnnotationState lhs
     mp <- getTypeMap
     case a of
@@ -1257,23 +1259,23 @@ consistentTypes (DeclN (ImplOpenFunction lhs args Nothing exprs implft pos)) = d
                 Right inferredRetType ->
                     case specify pos defs Map.empty mp fun (makeFunAnnotation args inferredRetType) of
                         Left err -> return $ Left err
-                        Right ann -> consistentTypes $ FunctionDef args (Just inferredRetType) exprs pos
+                        Right ann -> consistentTypesPass p $ FunctionDef args (Just inferredRetType) exprs pos
         Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
-consistentTypes (DeclN (OpenFunctionDecl lhs ann pos)) =  do
+consistentTypesPass p (DeclN (OpenFunctionDecl lhs ann pos)) =  do
     m <- getTypeMap
     l <- getAnnotationState lhs
     case l of
         Right l -> return $ sameTypes pos m ann l 
         Left err -> return $ Left err
-consistentTypes (IfExpr cond t e pos) = do
+consistentTypesPass p (IfExpr cond t e pos) = do
     m <- getTypeMap
-    c <- consistentTypes cond
+    c <- consistentTypesPass p cond
     case c >>= \x -> sameTypes pos m x (AnnotationLiteral "Bool") of
-        Right _ -> (\a b -> mergedTypeConcrete pos m <$> a <*> b) <$> consistentTypes t <*> consistentTypes e
+        Right _ -> (\a b -> mergedTypeConcrete pos m <$> a <*> b) <$> consistentTypesPass p t <*> consistentTypesPass p e
         Left err -> return $ Left err
-consistentTypes (CreateNewType lhs@(LhsIdentifer id _) args pos) = do
+consistentTypesPass p (CreateNewType lhs@(LhsIdentifer id _) args pos) = do
     mp <- getTypeMap
-    argsn <- sequence <$> mapM consistentTypes args
+    argsn <- sequence <$> mapM (consistentTypesPass p) args
     case argsn of
         Right as -> return $ case Map.lookup lhs mp of
             Just (NewTypeAnnotation id anns _) -> 
@@ -1282,8 +1284,8 @@ consistentTypes (CreateNewType lhs@(LhsIdentifer id _) args pos) = do
             Just a -> Left $ show a ++ " is not an instantiable type" ++ showPos pos
             Nothing -> Left $ noTypeFound id pos
         Left err -> return $ Left err
-consistentTypes (DeclN (Expr n)) = consistentTypes n
-consistentTypes (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
+consistentTypesPass p (DeclN (Expr n)) = consistentTypesPass p n
+consistentTypesPass p (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
     (_, (_, mp)) <- get
     pushScope
     typLhs <- getAnnotationState lhs
@@ -1291,12 +1293,12 @@ consistentTypes (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
         Right union@TypeUnion{} ->  do
             insertAnnotation lhs . Finalizeable False =<< excludeFromUnion pos ann union
             mapM_ getAssumptionType ts
-            t <- sequence <$> mapM consistentTypes ts
+            t <- sequence <$> mapM (consistentTypesPass p) ts
             popScope
             pushScope
             insertAnnotation lhs (Finalizeable False ann)
             mapM_ getAssumptionType es
-            e <- sequence <$> mapM consistentTypes es
+            e <- sequence <$> mapM (consistentTypesPass p) es
             popScope
             let res = case (t, e) of
                     (Right b, Right c) -> Right $ AnnotationLiteral "_"
@@ -1304,12 +1306,12 @@ consistentTypes (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
                     (_, Left a) -> Left a
             return res
         _ -> return . Left $ expectedUnion pos lhs typLhs
-consistentTypes (IfStmnt (CastNode lhs ann _) ts es pos) = do
+consistentTypesPass p (IfStmnt (CastNode lhs ann _) ts es pos) = do
     (_, (_, mp)) <- get
     pushScope
     insertAnnotation lhs (Finalizeable False ann)
     mapM_ getAssumptionType ts
-    t <- sequence <$> mapM consistentTypes ts
+    t <- sequence <$> mapM (consistentTypesPass p) ts
     popScope
     pushScope
     typLhs <- getAnnotationState lhs
@@ -1317,26 +1319,26 @@ consistentTypes (IfStmnt (CastNode lhs ann _) ts es pos) = do
         Right ts@TypeUnion{} -> insertAnnotation lhs . Finalizeable False =<< excludeFromUnion pos ann ts
         _ -> return ann
     mapM_ getAssumptionType es
-    e <- sequence <$> mapM consistentTypes es
+    e <- sequence <$> mapM (consistentTypesPass p) es
     popScope
     let res = case (t, e) of
             (Right b, Right c) -> Right $ AnnotationLiteral "_"
             (Left a, _) -> Left a
             (_, Left a) -> Left a
     return res
-consistentTypes (IfStmnt cond ts es pos) = do
+consistentTypesPass p (IfStmnt cond ts es pos) = do
     (_, (_, mp)) <- get
-    c <- consistentTypes cond
+    c <- consistentTypesPass p cond
     case sameTypes pos mp (AnnotationLiteral "Bool") <$> c of
         Right _ -> do
-            c <- consistentTypes cond
+            c <- consistentTypesPass p cond
             pushScope
             mapM_ getAssumptionType ts
-            t <- sequence <$> mapM consistentTypes ts
+            t <- sequence <$> mapM (consistentTypesPass p) ts
             popScope
             pushScope
             mapM_ getAssumptionType es
-            e <- sequence <$> mapM consistentTypes es
+            e <- sequence <$> mapM (consistentTypesPass p) es
             popScope
             let res = case (c, t, e) of
                     (Right a, Right b, Right c) -> Right $ AnnotationLiteral "_"
@@ -1345,13 +1347,13 @@ consistentTypes (IfStmnt cond ts es pos) = do
                     (_, _, Left a) -> Left a
             return res
         Left err -> return $ Left err
-consistentTypes (StructN (Struct ns _)) = (\case
+consistentTypesPass p (StructN (Struct ns _)) = (\case
     Right a -> return . Right $ StructAnnotation a
-    Left err -> return $ Left err) . sequence =<< mapM consistentTypes ns
-consistentTypes (Access st p pos) = do
+    Left err -> return $ Left err) . sequence =<< mapM (consistentTypesPass p) ns
+consistentTypesPass pass (Access st p pos) = do
     mp <- getTypeMap
-    f mp =<< getTypeStateFrom (consistentTypes st) pos where 
-    
+    f mp =<< getTypeStateFrom (consistentTypesPass pass st) pos where 
+
     f :: UserDefinedTypes -> Either String Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
     f mp = \case
             Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
@@ -1367,7 +1369,7 @@ consistentTypes (Access st p pos) = do
             Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
             Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
             Left err -> return $ Left err
-consistentTypes (FunctionDef args ret body pos) = 
+consistentTypesPass p (FunctionDef args ret body pos) = 
     case ret of
         Just ret -> do
             scope <- get
@@ -1377,7 +1379,7 @@ consistentTypes (FunctionDef args ret body pos) =
             let program = Program body
             let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True $ rigidizeTypeVariables mp ret):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just ans)) mp), mp))
             put ans'
-            xs <- sequence <$> mapM consistentTypes body
+            xs <- sequence <$> mapM (consistentTypesPass p) body
             s <- getAnnotationState (LhsIdentifer "return" pos)
             put scope
             case s of
@@ -1392,25 +1394,25 @@ consistentTypes (FunctionDef args ret body pos) =
             let program = Program body
             let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just old_ans)) mp), mp))
             put ans
-            xs <- sequence <$> mapM consistentTypes body
+            xs <- sequence <$> mapM (consistentTypesPass p) body
             (_, ((i, new_ans), _)) <- get
             case xs of
                 Right _ ->
                     (\case
                         Right ret -> case getAnnotation (LhsIdentifer "return" pos) new_ans of
                             Right (Finalizeable _ ret') -> do
-                                typ <- consistentTypes ret
+                                typ <- consistentTypesPass p ret
                                 put scope
                                 return $ Right $ makeFunAnnotation args $ unrigidizeTypeVariables mp ret'
                             Left err -> return $ Left err
                         Left err -> return $ Left err) =<< firstInferrableReturn pos body
                 Left err -> return $ Left err
-consistentTypes (Return n pos) = consistentTypes n >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
+consistentTypesPass p (Return n pos) = consistentTypesPass p n >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
     where lhs = LhsIdentifer "return" pos
-consistentTypes (Call e args pos) =  (\case 
+consistentTypesPass p (Call e args pos) =  (\case 
                     Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
-                        anns <- sequence <$> mapM consistentTypes args
+                        anns <- sequence <$> mapM (consistentTypesPass p) args
                         case anns of
                             Right anns -> let 
                                 (spec, rels) = getPartialNoUnderScoreSpecificationRules pos defs Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) 
@@ -1423,7 +1425,7 @@ consistentTypes (Call e args pos) =  (\case
                             Left err -> return $ Left err                    
                     Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> do
                         mp <- getTypeMap
-                        anns <- sequence <$> mapM consistentTypes args
+                        anns <- sequence <$> mapM (consistentTypesPass p) args
                         case anns of
                             Right anns -> let 
                                 defs = Set.unions $ map (collectGenenrics mp) anns
@@ -1441,11 +1443,15 @@ consistentTypes (Call e args pos) =  (\case
                             Left err -> return $ Left err       
                     Right ann -> return . Left $ "Can't call a value of type " ++ show ann ++ "\n" ++ showPos pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (getAssumptionType e) pos
-consistentTypes (Identifier x pos) = getAnnotationState (LhsIdentifer x pos)
-consistentTypes (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Int"
-consistentTypes (Lit (LitBool _ _)) = return . Right $ AnnotationLiteral "Bool"
-consistentTypes (Lit (LitString _ _)) = return . Right $ AnnotationLiteral "String"
-consistentTypes a = error $ show a
+consistentTypesPass p (Identifier x pos) = getAnnotationState (LhsIdentifer x pos)
+consistentTypesPass p (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Int"
+consistentTypesPass p (Lit (LitBool _ _)) = return . Right $ AnnotationLiteral "Bool"
+consistentTypesPass p (Lit (LitString _ _)) = return . Right $ AnnotationLiteral "String"
+consistentTypesPass p a = error $ show a
+
+consistentTypes n = consistentTypesPass RefineAssumtpions n >>= \case
+    Right _ -> consistentTypesPass VerifyAssumptions n
+    Left err -> return $ Left err
 
 onlyTypeDecls :: Node -> Bool
 onlyTypeDecls (DeclN StructDef{}) = True

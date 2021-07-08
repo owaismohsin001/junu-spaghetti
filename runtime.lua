@@ -28,6 +28,7 @@ end
 function IsStruct(spec)
     local spec = spec.structSpec
     return function(struct)
+        if type(struct) ~= "table" then return false end
         if spec == nil then return false end
         if tablelength(spec) ~= tablelength(struct) then return false end
         for k, v in pairs(struct) do
@@ -42,6 +43,8 @@ function AnyMatching(spec)
     local spec = spec.constraintSpec
     return function(struct)
         if spec == nil then return false end
+        if next(spec) == nil then return true end
+        if type(struct) ~= "table" then return false end
         for k, f in pairs(spec) do
             if struct[k] == nil then return false end
             if not f(struct[k]) then return false end
@@ -54,6 +57,7 @@ function IsNamedType(spec)
     local spec = spec.namedTypeSpec
     return function(typ)
         if spec == nil then return false end
+        if type(typ) ~= "table" then return false end
         if typ._type ~= spec.name then return false end
         if tablelength(spec.args) ~= tablelength(typ._args) then return false end
         for k, v in ipairs(typ._args) do
@@ -91,6 +95,7 @@ end
 
 function IsFunction(argNum)
     return function(f)
+        if type(f) ~= "function" then return false end
         return tablelength(getArgs(f)) == argNum
     end
 end
