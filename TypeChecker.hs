@@ -709,25 +709,13 @@ getAssumptionType (DeclN (Assign lhs@(LhsAccess access p accPos) expr pos)) =
                 case sameTypesImpl rhs pos mp expcd rhs of
                     Right a -> return $ Right a
                     Left _ -> do
-                        x <- f mp pos (Access access p accPos) whole expcd rhs
+                        x <- modifyAccess mp pos (Access access p accPos) whole expcd rhs p access accPos getAssumptionType
                         case x of
                             Right x -> modifyAnnotationState (initIdentLhs lhs) x
                             Left err -> return $ Left err
             (Left err, _, _) -> return $ Left err
             (_, Left err, _) -> return $ Left err
             (_, _, Left err) -> return $ Left err
-    where
-
-    f :: UserDefinedTypes -> P.SourcePos -> Node -> Annotation -> Annotation -> Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
-    f mp pos acc whole expected given = case whole of
-            g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
-            g@(RigidAnnotation _ cns) -> return $ genericHas pos g p cns
-            TypeUnion{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
-            NewTypeInstanceAnnotation{} -> getAssumptionType (Access access p accPos) >>= \res -> return $ sameTypes pos mp given =<< res
-            StructAnnotation ps -> case sameTypesImpl given pos mp expected given of 
-                Right a -> return $ Right a
-                Left err -> Right <$> modifyWhole (listAccess acc) whole (mergedTypeConcrete pos mp expected given)
-            a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
 getAssumptionType (DeclN (Assign lhs n pos)) = getAssumptionType n >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
 getAssumptionType (DeclN (FunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs (Finalizeable False ann)
 getAssumptionType (CreateNewType lhs args pos) = do
@@ -1230,12 +1218,40 @@ accessNewType givenArgs f g fid@(LhsIdentifer id pos) = do
                 Just a -> g a
                 Nothing -> return . Left $ noTypeFound id pos
 
+modifyAccess mp pos acc whole expected given prop access accPos f = case whole of
+        g@(GenericAnnotation _ cns) -> return $ genericHas pos g prop cns
+        g@(RigidAnnotation _ cns) -> return $ genericHas pos g prop cns
+        TypeUnion{} -> f (Access access prop accPos) >>= \res -> return $ sameTypes pos mp given =<< res
+        NewTypeInstanceAnnotation{} -> f (Access access prop accPos) >>= \res -> return $ sameTypes pos mp given =<< res
+        StructAnnotation ps -> case sameTypesImpl given pos mp expected given of 
+            Right a -> return $ Right a
+            Left err -> Right <$> modifyWhole (listAccess acc) whole (mergedTypeConcrete pos mp expected given)
+        a -> return . Left $ "Cannot get " ++ show prop ++ " from type " ++ show a ++ "\n" ++ showPos pos
+
 consistentTypesPass :: ConsistencyPass -> Node -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
 consistentTypesPass VerifyAssumptions (DeclN (Decl lhs rhs _ pos)) = (\a b m -> mergedTypeConcrete pos m <$> a <*> b)
     <$> getAnnotationState lhs <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
-consistentTypesPass RefineAssumtpions (DeclN (Decl lhs rhs _ pos)) = getAssumptionType rhs >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
-consistentTypesPass p (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
-    <$> getAssumptionType (Access access prop accPos) <*> consistentTypesPass p rhs <*> getTypeMap
+consistentTypesPass RefineAssumtpions (DeclN (Decl lhs rhs _ pos)) = consistentTypesPass RefineAssumtpions rhs >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
+consistentTypesPass VerifyAssumptions (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
+    <$> getAssumptionType (Access access prop accPos) <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
+consistentTypesPass RefineAssumtpions (DeclN (Assign lhs@(LhsAccess access prop accPos) rhs pos)) =
+    do
+        expcd <- consistentTypesPass RefineAssumtpions (Access access prop accPos)
+        rhs <- getTypeStateFrom (consistentTypesPass RefineAssumtpions rhs) pos
+        full <- getTypeStateFrom (getAnnotationState $ initIdentLhs lhs) pos
+        mp <- getTypeMap
+        case (full, expcd, rhs) of
+            (Right whole, Right expcd, Right rhs) ->
+                case sameTypesImpl rhs pos mp expcd rhs of
+                    Right a -> return $ Right a
+                    Left _ -> do
+                        x <- modifyAccess mp pos (Access access prop accPos) whole expcd rhs prop access accPos (consistentTypesPass RefineAssumtpions)
+                        case x of
+                            Right x -> modifyAnnotationState (initIdentLhs lhs) x
+                            Left err -> return $ Left err
+            (Left err, _, _) -> return $ Left err
+            (_, Left err, _) -> return $ Left err
+            (_, _, Left err) -> return $ Left err
 consistentTypesPass VerifyAssumptions (DeclN (Assign lhs rhs pos)) = (\a b m -> mergedTypeConcrete pos m <$> a <*> b) 
     <$> getAnnotationState lhs <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
 consistentTypesPass RefineAssumtpions (DeclN (Assign lhs rhs pos)) = getAssumptionType rhs >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
@@ -1265,7 +1281,7 @@ consistentTypesPass p (DeclN (OpenFunctionDecl lhs ann pos)) =  do
     m <- getTypeMap
     l <- getAnnotationState lhs
     case l of
-        Right l -> return $ sameTypes pos m ann l 
+        Right l -> if p == VerifyAssumptions then return $ sameTypes pos m ann l else makeUnionIfNotSame pos (Right ann) (getAnnotationState lhs) lhs
         Left err -> return $ Left err
 consistentTypesPass p (IfExpr cond t e pos) = do
     m <- getTypeMap
