@@ -480,7 +480,7 @@ specifyInternal pos defs a@(TypeUnion as) b@(TypeUnion bs) = do
                 Right _ -> return $ Right b
                 Left err -> 
                     if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
-                    else distinctUnion err (Set.toList $ collectGenenrics mp a)            
+                    else distinctUnion err (Set.toList $ collectGenenrics mp a)
         (a, b) -> specifyInternal pos defs a b
     where
         f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos defs x v1) ps2
@@ -780,6 +780,7 @@ getAssumptionType (CastNode lhs ann _) = Right <$> (insertAnnotation lhs (Finali
 getAssumptionType (RemoveFromUnionNode lhs ann pos) =
     (\case
         Right a@TypeUnion{} -> (return . Right $ AnnotationLiteral "Bool") <$ (\x -> insertAnnotation lhs . Finalizeable False) =<< excludeFromUnion pos ann a
+        Right a@NewTypeInstanceAnnotation{} -> (return . Right $ AnnotationLiteral "Bool") <$ (\x -> insertAnnotation lhs . Finalizeable False) =<< excludeFromUnion pos ann a
         Right a -> return . Left $ expectedUnion pos lhs ann
         Left err -> return $ Left err) =<< getAnnotationState lhs
 getAssumptionType (DeclN (Expr n)) = getAssumptionType n
@@ -790,20 +791,26 @@ getAssumptionType (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
     pushScope
     typLhs <- getAnnotationState lhs
     case typLhs of
-        Right union@TypeUnion{} ->  do
-            insertAnnotation lhs . Finalizeable False =<< excludeFromUnion pos ann union
-            t <- sequence <$> mapM getAssumptionType ts
-            popScope
-            pushScope
-            insertAnnotation lhs (Finalizeable False ann)
-            e <- sequence <$> mapM getAssumptionType es
-            popScope
-            let res = case (t, e) of
-                    (Right b, Right c) -> Right $ AnnotationLiteral "_"
-                    (Left a, _) -> Left a
-                    (_, Left a) -> Left a
-            return res
+        Right t@TypeUnion{} -> excludeType t
+        Right t@NewTypeInstanceAnnotation{} -> excludeType t
         _ -> return . Left $ expectedUnion pos lhs typLhs
+    where excludeType t = do
+            xs <- excludeFromUnion pos ann t
+            case xs of
+                Right ann' -> do
+                    insertAnnotation lhs $ Finalizeable False ann'
+                    t <- sequence <$> mapM getAssumptionType ts
+                    popScope
+                    pushScope
+                    insertAnnotation lhs (Finalizeable False ann)
+                    e <- sequence <$> mapM getAssumptionType es
+                    popScope
+                    let res = case (t, e) of
+                            (Right b, Right c) -> Right $ AnnotationLiteral "_"
+                            (Left a, _) -> Left a
+                            (_, Left a) -> Left a
+                    return res
+                Left err -> return $ Left err
 getAssumptionType (IfStmnt (CastNode lhs ann _) ts es pos) = do
     mp <- getTypeMap
     pushScope
@@ -813,7 +820,11 @@ getAssumptionType (IfStmnt (CastNode lhs ann _) ts es pos) = do
     pushScope
     typLhs <- getAnnotationState lhs
     case typLhs of
-        Right ts@TypeUnion{} -> insertAnnotation lhs . Finalizeable False =<< excludeFromUnion pos ann ts
+        Right ts@TypeUnion{} -> do
+            remAnn <- excludeFromUnion pos ann ts
+            case remAnn of
+                Right remAnn -> insertAnnotation lhs $ Finalizeable False remAnn
+                Left _ -> return ann
         _ -> return ann
     e <- sequence <$> mapM getAssumptionType es
     popScope
@@ -1187,10 +1198,11 @@ unionEither = ComparisionReturns {
     failout = \a b _ -> Right $ createUnion a b
 }
 
-createUnion (TypeUnion s1) (TypeUnion s2) = TypeUnion $ s1 `Set.union` s2
-createUnion (TypeUnion s1) a = TypeUnion $ a `Set.insert` s1
-createUnion a (TypeUnion s1) = TypeUnion $ a `Set.insert` s1
-createUnion a b = TypeUnion $ Set.fromList [a, b]
+createUnion a b = go a b where
+    go (TypeUnion s1) (TypeUnion s2) = TypeUnion $ s1 `Set.union` s2
+    go (TypeUnion s1) a = TypeUnion $ a `Set.insert` s1
+    go a (TypeUnion s1) = TypeUnion $ a `Set.insert` s1
+    go a b = TypeUnion $ Set.fromList [a, b]
 
 sameTypesGeneric a = sameTypesGenericCrt a comparisionEither
 
@@ -1200,13 +1212,22 @@ sameTypes = sameTypesGeneric (True, False, Map.empty)
 getTypeMap :: State (a, (b, c)) c
 getTypeMap = gets (snd . snd)
 
-excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState a Annotation
+excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState a (Either String Annotation)
 excludeFromUnion pos a (TypeUnion ts) = do
     (_, (_, usts)) <- get
-    return . TypeUnion . Set.fromList . remove . Set.toList $ Set.map (\b -> (sameTypes pos usts a b, b)) ts where
-    remove [] = []
-    remove ((Right a, _):xs) = remove xs
-    remove ((Left _, a):xs) = a : remove xs
+    if Set.size ts == 1 then excludeFromUnion pos a $ Set.elemAt 0 ts else do
+        let xs = Set.map snd . Set.filter (not . fst) $ Set.map (\b -> (any isRight [sameTypesNoUnionSpec pos usts b a, sameTypesNoUnionSpec pos usts a b], b)) ts 
+        if Set.null xs then 
+            return . Left $ "No set matching predicate notis " ++ show a 
+        else return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
+excludeFromUnion pos a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2)
+    | id1 /= id2 = return . Left $ expectedUnion pos a b
+    | otherwise = do
+        (_, (_, usts)) <- get
+        (\case
+            Right xs -> return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
+            Left err -> return $ Left err) . sequence =<< zipWithM (excludeFromUnion pos) anns1 anns2
+excludeFromUnion pos a b = return $ Right b
 
 accessNewType givenArgs f g fid@(LhsIdentifer id pos) = do
             mp <- getTypeMap
@@ -1306,22 +1327,28 @@ consistentTypesPass p (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
     pushScope
     typLhs <- getAnnotationState lhs
     case typLhs of
-        Right union@TypeUnion{} ->  do
-            insertAnnotation lhs . Finalizeable False =<< excludeFromUnion pos ann union
-            mapM_ getAssumptionType ts
-            t <- sequence <$> mapM (consistentTypesPass p) ts
-            popScope
-            pushScope
-            insertAnnotation lhs (Finalizeable False ann)
-            mapM_ getAssumptionType es
-            e <- sequence <$> mapM (consistentTypesPass p) es
-            popScope
-            let res = case (t, e) of
-                    (Right b, Right c) -> Right $ AnnotationLiteral "_"
-                    (Left a, _) -> Left a
-                    (_, Left a) -> Left a
-            return res
+        Right t@TypeUnion{} -> res t
+        Right t@NewTypeInstanceAnnotation{} -> res t
         _ -> return . Left $ expectedUnion pos lhs typLhs
+    where res t = do
+            eitherAnn <- excludeFromUnion pos ann t
+            case eitherAnn of
+                Left err -> return $ Left err
+                Right ann' -> do
+                    insertAnnotation lhs $ Finalizeable False ann'
+                    mapM_ getAssumptionType ts
+                    t <- sequence <$> mapM (consistentTypesPass p) ts
+                    popScope
+                    pushScope
+                    insertAnnotation lhs (Finalizeable False ann)
+                    mapM_ getAssumptionType es
+                    e <- sequence <$> mapM (consistentTypesPass p) es
+                    popScope
+                    let res = case (t, e) of
+                            (Right b, Right c) -> Right $ AnnotationLiteral "_"
+                            (Left a, _) -> Left a
+                            (_, Left a) -> Left a
+                    return res
 consistentTypesPass p (IfStmnt (CastNode lhs ann _) ts es pos) = do
     (_, (_, mp)) <- get
     pushScope
@@ -1332,7 +1359,11 @@ consistentTypesPass p (IfStmnt (CastNode lhs ann _) ts es pos) = do
     pushScope
     typLhs <- getAnnotationState lhs
     case typLhs of
-        Right ts@TypeUnion{} -> insertAnnotation lhs . Finalizeable False =<< excludeFromUnion pos ann ts
+        Right ts@TypeUnion{} -> do
+            eitherAnn <- excludeFromUnion pos ann ts
+            case eitherAnn of
+                Right ann -> insertAnnotation lhs $ Finalizeable False ann
+                Left err -> return ann
         _ -> return ann
     mapM_ getAssumptionType es
     e <- sequence <$> mapM (consistentTypesPass p) es
