@@ -683,13 +683,15 @@ listAccess n = reverse $ go n where
     go (Access n lhs _) = lhs : listAccess n
     go Identifier{} = []
 
-sameTypesImpl :: Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
-sameTypesImpl TypeUnion{} = sameTypesNoUnionSpec
-sameTypesImpl (NewTypeInstanceAnnotation _ xs) = 
-    if isJust $ find isTypeUnion xs then sameTypesNoUnionSpec else sameTypes where
+makeImpl a b TypeUnion{} = a
+makeImpl a b (NewTypeInstanceAnnotation _ xs) = 
+    if isJust $ find isTypeUnion xs then a else b where
     isTypeUnion TypeUnion{} = True
     isTypeUnion _ = False
-sameTypesImpl _ = sameTypes
+makeImpl a b _ = b
+
+sameTypesImpl :: Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
+sameTypesImpl = makeImpl sameTypesNoUnionSpec sameTypes
 
 matchingUserDefinedType :: P.SourcePos -> Set.Set Annotation -> UserDefinedTypes -> Annotation -> Maybe Annotation
 matchingUserDefinedType pos defs usts t = (\(LhsIdentifer id _, _) -> Just $ Annotation id) =<< find (isRight . snd) (Map.mapWithKey (,) $ Map.map (flip (specify pos defs Map.empty usts) t) usts)
@@ -1216,16 +1218,22 @@ excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState a
 excludeFromUnion pos a (TypeUnion ts) = do
     (_, (_, usts)) <- get
     if Set.size ts == 1 then excludeFromUnion pos a $ Set.elemAt 0 ts else do
-        let xs = Set.map snd . Set.filter (not . fst) $ Set.map (\b -> (any isRight [sameTypesImpl a pos usts b a, sameTypesImpl b pos usts a b], b)) ts 
-        if Set.null xs then 
-            return . Left $ "No set matching predicate notis " ++ show a 
-        else return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
+        let (unions, simples) = partition isUnion $ Set.toList $ Set.map snd $ Set.filter pred $ Set.map (\b -> (any isRight [sameTypes pos usts b a, sameTypes pos usts a b], b)) ts 
+        unions' <- sequence <$> mapM (excludeFromUnion pos a) unions
+        case (\x -> Set.fromList $ x ++ simples) <$> unions' of
+            Right xs -> if Set.null xs then 
+                    return . Left $ "No set matching predicate notis " ++ show a 
+                else return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
+            Left err -> return $ Left err
+    where 
+        pred (b, v) = (isUnion v && b) || not b
+        isUnion = makeImpl True False
 excludeFromUnion pos a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2)
     | id1 /= id2 = return . Left $ expectedUnion pos a b
     | otherwise = do
         (_, (_, usts)) <- get
         (\case
-            Right xs -> return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
+            Right xs -> return . Right $ NewTypeInstanceAnnotation id1 xs
             Left err -> return $ Left err) . sequence =<< zipWithM (excludeFromUnion pos) anns1 anns2
 excludeFromUnion pos a b = return $ Right b
 
