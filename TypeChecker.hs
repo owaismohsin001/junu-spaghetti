@@ -1216,7 +1216,7 @@ excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState a
 excludeFromUnion pos a (TypeUnion ts) = do
     (_, (_, usts)) <- get
     if Set.size ts == 1 then excludeFromUnion pos a $ Set.elemAt 0 ts else do
-        let xs = Set.map snd . Set.filter (not . fst) $ Set.map (\b -> (any isRight [sameTypesNoUnionSpec pos usts b a, sameTypesNoUnionSpec pos usts a b], b)) ts 
+        let xs = Set.map snd . Set.filter (not . fst) $ Set.map (\b -> (any isRight [sameTypesImpl a pos usts b a, sameTypesImpl b pos usts a b], b)) ts 
         if Set.null xs then 
             return . Left $ "No set matching predicate notis " ++ show a 
         else return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
