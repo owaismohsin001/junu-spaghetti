@@ -61,10 +61,11 @@ function IsNamedType(spec)
         if spec == nil then return false end
         if type(typ) ~= "table" then return false end
         if typ._type ~= spec.name then return false end
-        if tablelength(spec.args) ~= tablelength(typ._args) then return false end
+        if tablelength(spec.args) > tablelength(typ._args) then return false end
         for k, v in ipairs(typ._args) do
-            if spec.args[k] == nil then return false end
-            if not spec.args[k](v) then return false end
+            if spec.args[k] ~= nil then
+                if not spec.args[k](v) then return false end
+            end
         end
         return true
     end

@@ -410,6 +410,14 @@ isGeneralizedInstance pos ann@(NewTypeInstanceAnnotation id1 anns1) = do
         Left err -> return False
 isGeneralizedInstance a b = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ "]"
 
+isGeneralizedInstanceFree :: SourcePos -> Annotation -> Map.Map Lhs Annotation -> Bool
+isGeneralizedInstanceFree pos ann@(NewTypeInstanceAnnotation id1 anns1) mp =
+    case fullAnotationFromInstanceFree pos mp ann of
+        Right (NewTypeAnnotation id2 anns2 _) -> id1 == id2 && length anns1 < length anns2
+        Right _ -> False
+        Left err -> False
+isGeneralizedInstanceFree a b c = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ ", " ++ show c ++ "]"
+
 specifyInternal :: SourcePos
     -> Set.Set Annotation
     -> Annotation
