@@ -1,3 +1,5 @@
+function Array(x1) return { _type = "Array", _args = {x1}, a = x1} end
+
 function IsString(a) return type(a) == "string" end
 function IsInt(a) return type(a) == "number" end
 function IsBool(a) return type(a) == "boolean" end
@@ -128,7 +130,37 @@ mod = function(a, b) return math.mod(a, b) end
 anded = function(a, b) return a and b end
 ored = function(a, b) return a or b end
 
+getWrappedArray = function(a)
+    local axx = a.a
+    local ax
+    if type(axx) == "table" and axx._wrapped then 
+        ax = axx._wrapped
+    else
+        ax = {axx}
+    end
+    return ax
+end
+
+concat = function(a, b)
+    local ax, bx = getWrappedArray(a), getWrappedArray(b)
+    local new_table = duplicate(ax)
+    for _, v in ipairs(bx) do 
+        table.insert(new_table, v)
+    end
+    return Array({_wrapped = new_table})
+end
+
 write = function(a)
+    if type(a) == "table" and a._type and a._type == "Array" then
+        io.write("[")
+        local ax = getWrappedArray(a)
+        for _, v in ipairs(ax) do
+            write(v)
+            io.write(", ")
+        end
+        io.write("]")
+        return
+    end
     if type(a) == "table" then
         if a._type ~= nil then 
             io.write(a._type)

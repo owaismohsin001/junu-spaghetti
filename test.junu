@@ -2,7 +2,6 @@ type Pet = {species: String, name: String, color: String}
 type Moo = {name: String, age: Int, male: Bool, pet: Pet}
 type Person = {name: String, age: Int, male: Bool, pet: Pet, parent: Nil | Person}
 type Date = {month: Int, weekday: Int, year: Int}
-type Nil = {}
 newtype Tup(a{}, b{}) = (a, b)
 
 println("\n\n\nProgram begins: \n")

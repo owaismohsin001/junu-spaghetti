@@ -226,31 +226,32 @@ firstPreferablyDefinedRelation pos defs mp rs k =
                     [] -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
                     xs -> Right $ Set.elemAt 0 $ inDefs $ head xs
 
-substituteConstraints :: SourcePos -> Set.Set Annotation -> TypeRelations -> Map.Map Annotation Annotation -> UserDefinedTypes -> Constraint -> Either String  Constraint
-substituteConstraints pos defs rels mp usts (ConstraintHas lhs cs) = ConstraintHas lhs <$> substituteConstraints pos defs rels mp usts cs 
-substituteConstraints pos defs rels mp usts (AnnotationConstraint ann) = AnnotationConstraint <$> substituteVariables pos defs rels mp usts ann
+substituteConstraintsOptFilter pred pos defs rels mp usts (ConstraintHas lhs cs) = ConstraintHas lhs <$> substituteConstraintsOptFilter pred pos defs rels mp usts cs 
+substituteConstraintsOptFilter pred pos defs rels mp usts (AnnotationConstraint ann) = AnnotationConstraint <$> substituteVariablesOptFilter pred pos defs rels mp usts ann
 
-substituteVariables :: SourcePos -> Set.Set Annotation -> TypeRelations -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Either String Annotation
-substituteVariables pos defs rels mp usts fid@(GenericAnnotation id cns) = 
+substituteVariablesOptFilter pred pos defs rels mp usts fid@(GenericAnnotation id cns) = 
     maybe g (\x -> if sameTypesBool pos usts fid x then g else Right x) (Map.lookup fid mp)
     where 
         f x = case firstPreferablyDefinedRelation pos defs mp rels x of
             Right a -> Right a
             Left _ -> Right x
-        g = mapM (substituteConstraints pos defs rels mp usts) cns >>= f . GenericAnnotation id
-substituteVariables pos defs rels mp usts (RigidAnnotation id cns) = 
-    case substituteVariables pos defs rels mp usts $ GenericAnnotation id cns of
+        g = mapM (substituteConstraintsOptFilter pred pos defs rels mp usts) cns >>= f . GenericAnnotation id
+substituteVariablesOptFilter pred pos defs rels mp usts (RigidAnnotation id cns) = 
+    case substituteVariablesOptFilter pred pos defs rels mp usts $ GenericAnnotation id cns of
         Right (GenericAnnotation id cns) -> Right $ RigidAnnotation id cns
         Right a -> Right a
         Left err -> Left err
-substituteVariables pos defs rels mp usts id@AnnotationLiteral{} = Right id
-substituteVariables pos defs rels mp usts fid@(Annotation id) = maybe (Left $ noTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
-substituteVariables pos defs rels mp usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id <$> mapM (substituteVariables pos defs rels mp usts) anns <*> mapM (substituteVariables pos defs rels mp usts) annMap
-substituteVariables pos defs rels mp usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (substituteVariables pos defs rels mp usts) anns
-substituteVariables pos defs rels mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariables pos defs rels mp usts) args <*> substituteVariables pos defs rels mp usts ret
-substituteVariables pos defs rels mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariables pos defs rels mp usts) ms
-substituteVariables pos defs rels mp usts (TypeUnion ts) = foldr1 (mergedTypeConcrete pos usts) . filter (not . isGeneric pos usts) <$> mapM (substituteVariables pos defs rels mp usts) (Set.toList ts)
-substituteVariables pos defs rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
+substituteVariablesOptFilter pred pos defs rels mp usts id@AnnotationLiteral{} = Right id
+substituteVariablesOptFilter pred pos defs rels mp usts fid@(Annotation id) = maybe (Left $ noTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
+substituteVariablesOptFilter pred pos defs rels mp usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) anns <*> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) annMap
+substituteVariablesOptFilter pred pos defs rels mp usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) anns
+substituteVariablesOptFilter pred pos defs rels mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) args <*> substituteVariablesOptFilter pred pos defs rels mp usts ret
+substituteVariablesOptFilter pred pos defs rels mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) ms
+substituteVariablesOptFilter pred pos defs rels mp usts (TypeUnion ts) = 
+    foldr1 (mergedTypeConcrete pos usts) . (if pred then filter (not . isGeneric pos usts) else id) <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) (Set.toList ts)
+substituteVariablesOptFilter pred pos defs rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
+
+substituteVariables = substituteVariablesOptFilter True
 
 collectGenericConstraints :: UserDefinedTypes -> Constraint -> Set.Set Annotation
 collectGenericConstraints usts (ConstraintHas lhs cs) = collectGenericConstraints usts cs 
@@ -379,7 +380,6 @@ applyConstraintState pos defs ann (ConstraintHas lhs cn) =
                                 Just ann -> applyConstraintState pos defs ann cn
                                 Nothing -> return . Left $ "Could not find " ++ show lhs ++ " in " ++ show ps ++ "\n" ++ showPos pos
                             ) 
-                        (\a -> return . Left $ "Cannot get " ++ show lhs ++ " from type " ++ show a ++ "\n" ++ showPos pos)
                         (LhsIdentifer id pos)
             g@(GenericAnnotation id cns) -> return $ genericHas pos mp lhs cns
             t@TypeUnion{} -> typeUnionHas pos defs t cn
@@ -399,6 +399,16 @@ typeUnionHas pos defs (TypeUnion st) cn = (\case
                         Left err -> return $ Left err
                 ) . sequence =<< mapM (flip (applyConstraintState pos defs) cn) stl where stl = Set.toList st
 typeUnionHas _ _ t _ = error $ "typeUnionHas can only be called with type union, not " ++ show t
+
+isValidNewTypeInstance = undefined
+
+isGeneralizedInstance pos ann@(NewTypeInstanceAnnotation id1 anns1) = do
+    a <- fullAnotationFromInstance pos ann
+    case a of
+        Right (NewTypeAnnotation id2 anns2 _) -> return $ id1 == id2 && length anns1 < length anns2
+        Right _ -> return False
+        Left err -> return False
+isGeneralizedInstance a b = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ "]"
 
 specifyInternal :: SourcePos
     -> Set.Set Annotation
@@ -465,12 +475,23 @@ specifyInternal pos defs a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation
         Right _ -> return $ Right b
         Left err -> return $ Left err
         ) . sequence =<< zipWithM (specifyInternal pos defs) (oargs ++ [oret]) (args ++ [ret])
-specifyInternal pos defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2)
-    | length anns1 /= length anns2 = return $ callError anns1 anns2
-    | otherwise = (\case
-        Right _ -> return $ Right b
-        Left err -> return $ Left err
-        ) . sequence =<< zipWithM (specifyInternal pos defs) anns1 anns2
+specifyInternal pos defs a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+    | id1 /= id2 = return . Left $ unmatchedType a b pos
+    | otherwise = specifyInternal pos defs (NewTypeInstanceAnnotation id1 anns1) b
+specifyInternal pos defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2) 
+    | id1 /= id2 = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
+    | otherwise  = do
+        pred <- isGeneralizedInstance pos a
+        if pred then do
+            x <- fullAnotationFromInstance pos a
+            case x of
+                Right ntp@(NewTypeAnnotation id anns mp) -> specifyInternal pos defs ntp b
+                Right _ -> return . Left $ noTypeFound id1 pos
+                Left err -> return $ Left err
+        else (\case
+                Right _ -> return $ Right b
+                Left err -> return $ Left err
+                ) . sequence =<< zipWithM (specifyInternal pos defs) anns1 anns2
 specifyInternal pos defs a@(TypeUnion as) b@(TypeUnion bs) = do
     mp <- getTypeMap
     case (foldr1 (mergedTypeConcrete pos mp) as, foldr1 (mergedTypeConcrete pos mp) bs) of
@@ -501,7 +522,7 @@ specifyInternal pos defs a b@(TypeUnion st) = do
         Right a -> return . Right $ head a
         Left err -> return $ Left err
     where stl = Set.toList st
-specifyInternal pos defs a@(TypeUnion st) b = getFirst a b pos $ map (flip (specifyInternal pos defs) b) stl where stl = Set.toList st
+specifyInternal pos defs a@(TypeUnion st) b = getFirst a b pos $ map (flip (specifyInternal pos defs) b) $ Set.toList st
 specifyInternal pos defs a@(GenericAnnotation id cns) b = 
     (\case
         Right _ -> do
@@ -941,7 +962,6 @@ getAssumptionType (Access st p pos) = do
             Right (NewTypeInstanceAnnotation id anns) -> 
                 accessNewType anns
                 (\(NewTypeAnnotation _ _ ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)) 
-                (\a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos)
                 (LhsIdentifer id pos)
             Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
             Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
@@ -977,6 +997,7 @@ baseMapping = Map.fromList $ map (second (Finalizeable True)) [
     (LhsIdentifer "println" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
     (LhsIdentifer "duplicate" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
     (LhsIdentifer "write" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (StructAnnotation Map.empty)),
+    (LhsIdentifer "concat" sourcePos, FunctionAnnotation [TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [GenericAnnotation "a" []]]),TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [GenericAnnotation "b" []]])] (TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [TypeUnion (Set.fromList [GenericAnnotation "a" [],GenericAnnotation "b" []])]]))),
     (LhsIdentifer "sub" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mod" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mul" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
@@ -1092,8 +1113,12 @@ sameTypesGenericCrt gs crt pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnno
     if length as == length bs then (\xs -> FunctionAnnotation (init xs) (last xs)) <$> ls
     else failout crt a b pos
     where ls = zipWithM (sameTypesGenericCrt gs crt pos mp) (as ++ [ret1]) (bs ++ [ret2])
+sameTypesGenericCrt gs crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+    | id1 /= id2 = Left $ unmatchedType a b pos
+    | otherwise = sameTypesGenericCrt gs crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
 sameTypesGenericCrt gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
     | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 <$> ls
+    | e1 == e2 && length as1 < length as2 = flip (sameTypesGenericCrt gs crt pos mp) b =<< fullAnotationFromInstanceFree pos mp a
     | otherwise = failout crt a b pos 
     where ls = zipWithM (sameTypesGenericCrt gs crt pos mp) as1 as2
 sameTypesGenericCrt gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
@@ -1218,11 +1243,11 @@ excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState a
 excludeFromUnion pos a (TypeUnion ts) = do
     (_, (_, usts)) <- get
     if Set.size ts == 1 then excludeFromUnion pos a $ Set.elemAt 0 ts else do
-        let (unions, simples) = partition isUnion $ Set.toList $ Set.map snd $ Set.filter pred $ Set.map (\b -> (any isRight [sameTypes pos usts b a, sameTypes pos usts a b], b)) ts 
+        let (unions, simples) = partition isUnion . Set.toList . Set.map snd . Set.filter pred $ Set.map (\b -> (any isRight [sameTypes pos usts b a, sameTypes pos usts a b], b)) ts 
         unions' <- sequence <$> mapM (excludeFromUnion pos a) unions
         case (\x -> Set.fromList $ x ++ simples) <$> unions' of
             Right xs -> if Set.null xs then 
-                    return . Left $ "No set matching predicate notis " ++ show a 
+                    return . Left $ "No set matching predicate notis " ++ show a ++ "\n" ++ showPos pos
                 else return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
             Left err -> return $ Left err
     where 
@@ -1237,15 +1262,35 @@ excludeFromUnion pos a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceA
             Left err -> return $ Left err) . sequence =<< zipWithM (excludeFromUnion pos) anns1 anns2
 excludeFromUnion pos a b = return $ Right b
 
-accessNewType givenArgs f g fid@(LhsIdentifer id pos) = do
-            mp <- getTypeMap
-            case Map.lookup fid mp of
-                Just x@(NewTypeAnnotation id args map) -> 
-                    case substituteVariables pos (collectGenenrics mp x) Map.empty (Map.fromList $ zip args givenArgs) mp x of
-                        Right x -> f x
-                        Left err -> return . Left $ err
-                Just a -> g a
-                Nothing -> return . Left $ noTypeFound id pos
+accessNewType givenArgs f fid@(LhsIdentifer id pos) =
+    (\case
+        Right x -> f x
+        Left err -> return . Left $ err) =<< getFullAnnotation fid givenArgs
+accessNewType _ _ _ = error "Only unions allowed"
+
+fullAnotationFromInstance pos (NewTypeInstanceAnnotation id args) = getFullAnnotation (LhsIdentifer id pos) args
+fullAnotationFromInstance a b = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ "]"
+
+fullAnotationFromInstanceFree pos mp (NewTypeInstanceAnnotation id givenArgs) = 
+    case Map.lookup fid mp of
+        Just x@(NewTypeAnnotation id args map) -> 
+            substituteVariablesOptFilter False pos (f mp) Map.empty (Map.fromList $ zip args givenArgs) mp x
+        Just a -> Left $ noTypeFound id pos
+        Nothing -> Left $ noTypeFound id pos
+    where 
+        f mp = Set.unions $ map (collectGenenrics mp) givenArgs
+        fid = LhsIdentifer id pos
+fullAnotationFromInstanceFree a b c = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ ", " ++ show c ++ "]"
+
+getFullAnnotation fid@(LhsIdentifer id pos) givenArgs = do
+    mp <- getTypeMap
+    case Map.lookup fid mp of
+        Just x@(NewTypeAnnotation id args map) -> 
+            return $ substituteVariablesOptFilter False pos (f mp) Map.empty (Map.fromList $ zip args givenArgs) mp x
+        Just a -> return . Left $ noTypeFound id pos
+        Nothing -> return . Left $ noTypeFound id pos
+    where f mp = Set.unions $ map (collectGenenrics mp) givenArgs
+getFullAnnotation a b = error $ "Unexpected argments for getFullAnnotation [" ++ show a ++ ", " ++ show b ++ "]"
 
 modifyAccess mp pos acc whole expected given prop access accPos f = case whole of
         g@(GenericAnnotation _ cns) -> return $ genericHas pos g prop cns
@@ -1419,7 +1464,6 @@ consistentTypesPass pass (Access st p pos) = do
             Right (NewTypeInstanceAnnotation id anns) -> 
                 accessNewType anns
                 (\(NewTypeAnnotation _ _ ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)) 
-                (\a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos)
                 (LhsIdentifer id pos)
             Right (StructAnnotation ps) -> return $ toEither ("Could not find " ++ show p ++ " in " ++ show ps ++ "\n" ++ showPos pos) (Map.lookup p ps)
             Right a -> return . Left $ "Cannot get " ++ show p ++ " from type " ++ show a ++ "\n" ++ showPos pos
@@ -1517,7 +1561,7 @@ typeNodes :: [Node] -> ([Node], [Node])
 typeNodes = partition onlyTypeDecls
 
 typeMap :: [Node] -> Map.Map Lhs (Annotation, P.SourcePos)
-typeMap xs = Map.fromList $ map makeTup xs where
+typeMap xs = Map.fromList (map makeTup xs) where
     makeTup (DeclN (StructDef lhs rhs pos)) = (lhs, (rhs, pos))
     makeTup (DeclN (NewTypeDecl lhs rhs pos)) = (lhs, (rhs, pos))
 
@@ -1604,6 +1648,12 @@ addFinalization (Annotations anns rest) = Annotations (Map.map (Finalizeable Tru
 invertUserDefinedTypes :: Ord k => Map.Map a k -> Map.Map k a
 invertUserDefinedTypes usts = Map.fromList $ Map.elems $ Map.mapWithKey (curry swap) usts
 
+predefinedTypeNodes :: [Node]
+predefinedTypeNodes = map DeclN [
+    StructDef (LhsIdentifer "Nil" sourcePos) (StructAnnotation Map.empty) sourcePos,
+    NewTypeDecl (LhsIdentifer "Array" sourcePos) (NewTypeAnnotation "Array" [GenericAnnotation "x" []] $ Map.singleton (LhsIdentifer "a" sourcePos) $ GenericAnnotation "x" []) sourcePos
+    ]
+
 typeCheckedScope :: [Node] -> Either String ([Node], [Node], (UserDefinedTypes, Annotations Annotation))
 typeCheckedScope program = 
     do
@@ -1618,6 +1668,7 @@ typeCheckedScope program =
     where 
         earlyReturns = earlyReturnToElse lifted
         lifted = evalState (liftLambda restProgram) (0, [])
-        (metProgram, restProgram) = typeNodes program
-        typesPos = typeMap metProgram
+        (_metProgram, restProgram) = typeNodes program
+        metProgram = _metProgram ++ predefinedTypeNodes
+        typesPos = typeMap $ metProgram
         types = Map.map fst typesPos

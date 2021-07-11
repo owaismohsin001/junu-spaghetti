@@ -1,0 +1,21 @@
+newtype Ls(x{}, Nil | Ls(x{})) = (r, res)
+
+let base = () => {return {}}
+
+let res = Array(1)
+res = concat(res, Array(true))
+res = concat(res, Array("mooo"))
+
+let sres = concat(res, Array({b: "Hello"}))
+sres = concat(sres, Array({a: 3}))
+
+res = concat(res, Array(sres))
+println(res)
+
+len(xs: Nil | Ls(n{})) => Int {
+    if xs is Nil { return 0 }
+    return len(xs.res)+1
+}
+
+let xs = Ls("d", Ls("ddjn", Ls("ddjn", {})))
+println(len(xs))
