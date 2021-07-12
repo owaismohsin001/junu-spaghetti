@@ -1,12 +1,13 @@
 newtype Ls(x{}, Nil | Ls(x{})) = (r, res)
 
 let base = () => {return {}}
+let insert = (arr: Nil | Array(m{}), a: n{}) => concat(arr, Array(a))
 
 let res = Array(1)
-res = concat(res, Array(true))
-res = concat(res, Array("mooo"))
+res = insert(insert(res, true), "mooo")
+res = concat(res, Array({p: true}))
 
-let sres = concat(res, Array({b: "Hello"}))
+let sres = insert(res, {b: "Hello"})
 sres = concat(sres, Array({a: 3}))
 
 res = concat(res, Array(sres))

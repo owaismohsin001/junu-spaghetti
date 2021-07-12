@@ -202,37 +202,48 @@ isGeneric pos usts ann = evalState (go pos usts ann) Map.empty where
     go pos mp (TypeUnion ts) = or <$> mapM (go pos mp) (Set.toList ts)
     go pos mp OpenFunctionAnnotation{} = return False
 
-firstPreferablyDefinedRelation pos defs mp rs k =
+firstPreferablyDefinedRelation pos usts defs mp rs k =
     case Map.lookup k rs of
         Just s -> 
             if notnull stf then Right . defResIfNull $ inDefs stf 
-            else if notnull deftf then Right . defResIfNull $ inDefs deftf  
+            else if notnull deftf then Right . defResIfNull $ inDefs deftf
             else case defRes of
                     Right x -> Right x
                     Left _ -> Right $ Set.elemAt 0 $ if notnull $ inDefs s then inDefs s else s
             where 
                 notnull = not . Set.null
-                deftf = Set.filter (`Set.member` defs) s
+                deftf = Set.filter (flip (isDefMember usts) defs) s
                 stf = Set.filter (\x -> isJust (Map.lookup x mp)) s
 
-                defResIfNull s = if notnull s then Set.elemAt 0 s else case defRes of
+                defResIfNull s' = if notnull s' then Set.elemAt 0 s' else case defRes of
                     Right x -> x
                     Left _ -> Set.elemAt 0 s
         Nothing -> defRes
         where 
-            inDefs s = Set.filter (`Set.member` defs) s
+            inDefs s = Set.filter (flip (isDefMember usts) defs) s
             defRes = 
-                case Map.elems $ Map.filter (\s -> Set.member k s && not (Set.disjoint defs s)) $ Map.mapWithKey Set.insert rs of
+                case Map.elems $ Map.filter (\s -> isDefMember usts k s && not (Set.disjoint defs s)) $ Map.mapWithKey Set.insert rs of
                     [] -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
                     xs -> Right $ Set.elemAt 0 $ inDefs $ head xs
 
 substituteConstraintsOptFilter pred pos defs rels mp usts (ConstraintHas lhs cs) = ConstraintHas lhs <$> substituteConstraintsOptFilter pred pos defs rels mp usts cs 
 substituteConstraintsOptFilter pred pos defs rels mp usts (AnnotationConstraint ann) = AnnotationConstraint <$> substituteVariablesOptFilter pred pos defs rels mp usts ann
 
+isDefMember :: UserDefinedTypes -> Annotation -> Set.Set Annotation -> Bool
+isDefMember usts a defs = rigidizeTypeVariables usts a `Set.member` defs || a `Set.member` defs
+
+substituteVariablesOptFilter :: Bool
+    -> SourcePos
+    -> Set.Set Annotation
+    -> Map.Map Annotation (Set.Set Annotation)
+    -> Map.Map Annotation Annotation
+    -> UserDefinedTypes
+    -> Annotation
+    -> Either [Char] Annotation
 substituteVariablesOptFilter pred pos defs rels mp usts fid@(GenericAnnotation id cns) = 
     maybe g (\x -> if sameTypesBool pos usts fid x then g else Right x) (Map.lookup fid mp)
     where 
-        f x = case firstPreferablyDefinedRelation pos defs mp rels x of
+        f x = case firstPreferablyDefinedRelation pos usts defs mp rels x of
             Right a -> Right a
             Left _ -> Right x
         g = mapM (substituteConstraintsOptFilter pred pos defs rels mp usts) cns >>= f . GenericAnnotation id
@@ -248,7 +259,7 @@ substituteVariablesOptFilter pred pos defs rels mp usts (NewTypeInstanceAnnotati
 substituteVariablesOptFilter pred pos defs rels mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) args <*> substituteVariablesOptFilter pred pos defs rels mp usts ret
 substituteVariablesOptFilter pred pos defs rels mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) ms
 substituteVariablesOptFilter pred pos defs rels mp usts (TypeUnion ts) = 
-    foldr1 (mergedTypeConcrete pos usts) . (if pred then filter (not . isGeneric pos usts) else id) <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) (Set.toList ts)
+    foldr1 (mergedTypeConcrete pos usts) . (if pred then filter (\a -> not (isGeneric pos usts a) || (isGeneric pos usts a && isDefMember usts a defs)) else id) <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) (Set.toList ts)
 substituteVariablesOptFilter pred pos defs rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
 substituteVariables = substituteVariablesOptFilter True
@@ -289,20 +300,20 @@ reshuffleTypes pos defs = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (cha
 sameTypesNoUnionSpec = sameTypesGeneric (False, True, Map.empty)
 
 addTypeVariableGeneralized n pos defs stmnt k v = do
-        (a, ((rs, mp), usts)) <- get
-        case Map.lookup k mp of
-            Nothing -> addToMap a rs mp usts k v
-            Just a -> do
-                case sameTypesNoUnionSpec pos usts a v of
-                    Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
-                        case Map.lookup k rs of
-                            Just st -> if Set.member v st then addToMap a rs mp usts k v else return $ Left err
-                            Nothing -> 
-                                if n > 0 then do
-                                    reshuffleTypes pos defs
-                                    addTypeVariableGeneralized (n-1) pos defs stmnt k v
-                                    else return $ Left err
-                    Right a -> addToMap a rs mp usts k v
+    (a, ((rs, mp), usts)) <- get
+    case Map.lookup k mp of
+        Nothing -> addToMap a rs mp usts k v
+        Just a -> do
+            case sameTypesNoUnionSpec pos usts a v of
+                Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
+                    case Map.lookup k rs of
+                        Just st -> if Set.member v st then addToMap a rs mp usts k v else return $ Left err
+                        Nothing -> 
+                            if n > 0 then do
+                                reshuffleTypes pos defs
+                                addTypeVariableGeneralized (n-1) pos defs stmnt k v
+                                else return $ Left err
+                Right a -> addToMap a rs mp usts k v
     where
         addToMap a rs mp usts k v = do
             put (a, ((rs, Map.insert k v mp), usts))
