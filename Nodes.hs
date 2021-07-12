@@ -194,8 +194,7 @@ data Node =
     | IfStmnt Node [Node] [Node] P.SourcePos
     | IfExpr Node Node Node P.SourcePos
     | CreateNewType Lhs [Node] P.SourcePos
-    | CastNode Lhs Annotation P.SourcePos
-    | RemoveFromUnionNode Lhs Annotation P.SourcePos 
+    | TypeDeductionNode Lhs TypeDeductionExpr P.SourcePos
 
 indent = intercalate "\n" . map ("\t" ++) . lines
 
@@ -211,8 +210,27 @@ instance Show Node where
     show (IfStmnt c ts es _) = "if " ++ show c ++ "{\n" ++ indent (intercalate "\n" (map show ts)) ++ "\n}" ++ " else {\n" ++ indent (intercalate "\n" (map show es)) ++ "\n}"
     show (IfExpr c t e _) = "if " ++ show c ++ " then " ++ show t ++ " else " ++ show e
     show (CreateNewType lhs args _) = show lhs ++ "(" ++ intercalate ", " (map show args) ++ ")"
-    show (CastNode lhs ann _) = show lhs ++ " is " ++ show ann
-    show (RemoveFromUnionNode lhs ann _) = show lhs ++ " isnot " ++ show ann
+    show (TypeDeductionNode lhs t pos) = show lhs ++ " => " ++ show t ++ "\n" ++ show pos
+
+data TypeDeductionExpr =
+    IsType Lhs Annotation
+    | NotIsType Lhs Annotation
+    | NegateTypeDeduction TypeDeductionExpr
+    deriving(Show, Ord, Eq)
+
+negateDeduction :: TypeDeductionExpr -> TypeDeductionExpr
+negateDeduction (IsType lhs ann) = NotIsType lhs ann
+negateDeduction (NotIsType lhs ann) = IsType lhs ann
+negateDeduction (NegateTypeDeduction typ) = NegateTypeDeduction $ negateDeduction typ
+
+deductionNodesToDeductions :: Node -> TypeDeductionExpr
+deductionNodesToDeductions (TypeDeductionNode lhs a pos) = a
+deductionNodesToDeductions a = error $ "Can't remove types from " ++ show a
+
+getFirstDeductionLhs :: TypeDeductionExpr -> Lhs
+getFirstDeductionLhs (IsType lhs _) = lhs
+getFirstDeductionLhs (NotIsType lhs _) = lhs
+getFirstDeductionLhs (NegateTypeDeduction typ) = getFirstDeductionLhs typ
 
 data NodeNoPos =
     DeclNNoPos Decl
@@ -226,8 +244,7 @@ data NodeNoPos =
     | IfStmntNoPos Node [Node] [Node]
     | IfExprNoPos Node Node Node
     | CreateNewTypeNoPos Lhs [NodeNoPos]
-    | CastNodeNoPos Lhs Annotation
-    | RemoveFromUnionNodeNoPos Lhs Annotation
+    | TypeDeductionNodeNoPos Lhs TypeDeductionExpr
     deriving(Show, Ord, Eq)
 
 toNodeNoPos :: Node -> NodeNoPos
@@ -242,8 +259,7 @@ toNodeNoPos (Access a b _) = AccessNoPos a b
 toNodeNoPos (IfStmnt a b c _) = IfStmntNoPos a b c
 toNodeNoPos (IfExpr a b c _) = IfExprNoPos a b c
 toNodeNoPos (CreateNewType a b _) = CreateNewTypeNoPos a (map toNodeNoPos b)
-toNodeNoPos (CastNode a b _) = CastNodeNoPos a b
-toNodeNoPos (RemoveFromUnionNode a b _) =  RemoveFromUnionNodeNoPos a b
+toNodeNoPos (TypeDeductionNode a b _) =  TypeDeductionNodeNoPos a b
 
 instance Eq Node where
     a == b = toNodeNoPos a == toNodeNoPos b

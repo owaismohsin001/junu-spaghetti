@@ -35,25 +35,29 @@ getAnnotation k@(LhsIdentifer _ pos) (Annotations anns rest) =
                 Nothing -> Left $ show k ++ " not found in this scope\n" ++ showPos pos
 getAnnotation k a = error $ "Unexpected args " ++ show (k, a)
 
-modifyAnnotation :: Show a => Lhs -> a -> Annotations (Finalizeable a) -> Result String (Annotations (Finalizeable a))
-modifyAnnotation k@(LhsIdentifer _ pos) ann (Annotations anns rest) =
+modifyAnnotation :: UserDefinedTypes -> Lhs -> Annotation -> Annotations (Finalizeable Annotation) -> Result String (Annotations (Finalizeable Annotation))
+modifyAnnotation usts k@(LhsIdentifer _ pos) ann (Annotations anns rest) =
     case Map.lookup k anns of
         Just (Finalizeable False v) -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns) rest
-        Just (Finalizeable True v) -> Left $ "Can not reconcile annotated " ++ show v ++ " with " ++ show ann ++ "\n" ++ showPos pos
+        Just (Finalizeable True v) -> 
+            case sameTypesNoUnionSpec pos usts ann v of
+                Right _ -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns) rest
+                Left err -> Left $ "Can not reconcile annotated" ++ show ann ++ " with " ++ show v
         Nothing -> 
             case rest of
-                Just rs -> case modifyAnnotation k ann rs of
+                Just rs -> case modifyAnnotation usts k ann rs of
                     Right a -> Right $ Annotations anns (Just a)
                     Left err -> Left err
                 Nothing -> Left $ show k ++ " not found in this scope\n" ++ showPos pos
-modifyAnnotation k ann as = error $ "Unexpected args " ++ show (k, ann, as)
+modifyAnnotation _ k ann as = error $ "Unexpected args " ++ show (k, ann, as)
 
-modifyAnnotationState :: Show a => Lhs -> a -> AnnotationState (Annotations (Finalizeable a)) (Result String a)
-modifyAnnotationState k v = do
-    (a, ((i, anns), b)) <- get
-    case modifyAnnotation k v anns of
-        Right x -> (Right <$> put (a, ((i, x), b))) $> Right v
+modifyAnnotationState :: Lhs -> Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Result String Annotation)
+modifyAnnotationState k@(LhsIdentifer _ pos) v = do
+    (a, ((i, anns), usts)) <- get
+    case modifyAnnotation usts k v anns of
+        Right x -> (Right <$> put (a, ((i, x), usts))) $> Right v
         Left err -> return $ Left err
+modifyAnnotationState k v = error $ "Unexpected args " ++ show (k, v)
 
 finalizeAnnotations :: Annotations (Finalizeable a) -> Annotations (Finalizeable a)
 finalizeAnnotations (Annotations anns Nothing) = Annotations (Map.map finalize anns) Nothing
@@ -148,21 +152,17 @@ firstInferrableReturn :: P.SourcePos -> [Node] -> AnnotationState (Annotations (
 firstInferrableReturn pos [] = return . Left $ "Could not infer the type of function at \n" ++ showPos pos
 firstInferrableReturn pos (IfStmnt cond ts es _:xs) = do
     scope@(_, (_, mp)) <- get
-    c <- getAssumptionType cond
-    case sameTypes pos mp (AnnotationLiteral "Bool") <$> c of
-        Right _ -> do
-            t <- firstInferrableReturn pos ts
-            case t of
+    t <- firstInferrableReturn pos ts
+    case t of
+        Right a -> return $ Right a
+        Left _ -> do
+            put scope
+            e <- firstInferrableReturn pos es
+            case e of
                 Right a -> return $ Right a
-                Left _ -> do
+                Left err -> do
                     put scope
-                    e <- firstInferrableReturn pos es
-                    case e of
-                        Right a -> return $ Right a
-                        Left err -> do
-                            put scope
-                            return $ Left err
-        Left err -> return $ Left err
+                    return $ Left err
 firstInferrableReturn pos (n@(DeclN (Decl _ rhs _ _)):xs) = do
     getAssumptionType n
     as <- firstInferrableReturn pos [rhs] 
@@ -736,6 +736,24 @@ sameTypesImpl = makeImpl sameTypesNoUnionSpec sameTypes
 matchingUserDefinedType :: P.SourcePos -> Set.Set Annotation -> UserDefinedTypes -> Annotation -> Maybe Annotation
 matchingUserDefinedType pos defs usts t = (\(LhsIdentifer id _, _) -> Just $ Annotation id) =<< find (isRight . snd) (Map.mapWithKey (,) $ Map.map (flip (specify pos defs Map.empty usts) t) usts)
 
+evaluateTExpr :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> State Annotation (Either String Annotation)
+evaluateTExpr pos usts (IsType _ ann) = do
+    typ <- get 
+    case filterUnion pos usts (\a b -> not $ excludeSameTypes pos usts a b) ann typ of
+        Right typ' -> put typ' $> Right typ'
+        Left err -> return $ Left err
+evaluateTExpr pos usts (NotIsType _ ann) = do
+    typ <- get 
+    case filterUnion pos usts (excludeSameTypes pos usts) ann typ of
+        Right typ' -> put typ' $> Right typ'
+        Left err -> return $ Left err
+evaluateTExpr pos usts (NegateTypeDeduction tExpr) = do
+    typ <- get 
+    evaluateTExpr pos usts $ negateDeduction tExpr
+
+evaluateTExprTotal :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> Annotation -> Either String Annotation
+evaluateTExprTotal pos usts tExpr typLhs = res $> st where (res, st) = runState (evaluateTExpr pos usts tExpr) typLhs
+
 getAssumptionType :: Node -> AnnotationState (Annotations (Finalizeable Annotation)) (Result String Annotation)
 getAssumptionType (DeclN (Decl lhs n a _)) = case a of 
     Just a -> Right <$> insertAnnotation lhs (Finalizeable True a)
@@ -818,63 +836,33 @@ getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
                                     else return . Left $ "Forbidden to specify specified type variables\n" ++ showPos pos
                 Left err -> return $ Left err
         Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
-getAssumptionType (CastNode lhs ann _) = Right <$> (insertAnnotation lhs (Finalizeable False ann) $> AnnotationLiteral "Bool")
-getAssumptionType (RemoveFromUnionNode lhs ann pos) =
-    (\case
-        Right a@TypeUnion{} -> (return . Right $ AnnotationLiteral "Bool") <$ (\x -> insertAnnotation lhs . Finalizeable False) =<< excludeFromUnion pos ann a
-        Right a@NewTypeInstanceAnnotation{} -> (return . Right $ AnnotationLiteral "Bool") <$ (\x -> insertAnnotation lhs . Finalizeable False) =<< excludeFromUnion pos ann a
-        Right a -> return . Left $ expectedUnion pos lhs ann
-        Left err -> return $ Left err) =<< getAnnotationState lhs
 getAssumptionType (DeclN (Expr n)) = getAssumptionType n
 getAssumptionType (Return n pos) = getAssumptionType n >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
     where lhs = LhsIdentifer "return" pos
-getAssumptionType (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
-    (_, (_, mp)) <- get
-    pushScope
-    typLhs <- getAnnotationState lhs
-    case typLhs of
-        Right t@TypeUnion{} -> excludeType t
-        Right t@NewTypeInstanceAnnotation{} -> excludeType t
-        _ -> return . Left $ expectedUnion pos lhs typLhs
-    where excludeType t = do
-            xs <- excludeFromUnion pos ann t
-            case xs of
-                Right ann' -> do
-                    insertAnnotation lhs $ Finalizeable False ann'
-                    t <- sequence <$> mapM getAssumptionType ts
-                    popScope
-                    pushScope
-                    insertAnnotation lhs (Finalizeable False ann)
-                    e <- sequence <$> mapM getAssumptionType es
-                    popScope
-                    let res = case (t, e) of
-                            (Right b, Right c) -> Right $ AnnotationLiteral "_"
-                            (Left a, _) -> Left a
-                            (_, Left a) -> Left a
-                    return res
-                Left err -> return $ Left err
-getAssumptionType (IfStmnt (CastNode lhs ann _) ts es pos) = do
+getAssumptionType (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
     mp <- getTypeMap
-    pushScope
-    insertAnnotation lhs (Finalizeable False ann)
-    t <- sequence <$> mapM getAssumptionType ts
-    popScope
-    pushScope
     typLhs <- getAnnotationState lhs
-    case typLhs of
-        Right ts@TypeUnion{} -> do
-            remAnn <- excludeFromUnion pos ann ts
-            case remAnn of
-                Right remAnn -> insertAnnotation lhs $ Finalizeable False remAnn
-                Left _ -> return ann
-        _ -> return ann
-    e <- sequence <$> mapM getAssumptionType es
-    popScope
-    let res = case (t, e) of
-            (Right b, Right c) -> Right $ AnnotationLiteral "_"
-            (Left a, _) -> Left a
-            (_, Left a) -> Left a
-    return res
+    pushScope
+    case evaluateTExprTotal pos mp tExpr =<< typLhs of
+        Right ann -> do
+            insertAnnotation lhs (Finalizeable False ann)
+            t <- sequence <$> mapM getAssumptionType ts
+            popScope
+            pushScope
+            case typLhs of
+                Right ts@TypeUnion{} -> do
+                    case evaluateTExprTotal pos mp (negateDeduction tExpr) =<< typLhs of
+                        Right remAnn -> insertAnnotation lhs $ Finalizeable False remAnn
+                        Left _ -> return ann
+                _ -> return ann
+            e <- sequence <$> mapM getAssumptionType es
+            popScope
+            let res = case (t, e) of
+                    (Right b, Right c) -> Right $ AnnotationLiteral "_"
+                    (Left a, _) -> Left a
+                    (_, Left a) -> Left a
+            return res
+        Left err -> return $ Left err
 getAssumptionType (IfStmnt cond ts es pos) = do
     (_, (_, mp)) <- get
     c <- consistentTypes cond
@@ -1258,28 +1246,30 @@ sameTypes = sameTypesGeneric (True, False, Map.empty)
 getTypeMap :: State (a, (b, c)) c
 getTypeMap = gets (snd . snd)
 
-excludeFromUnion :: P.SourcePos -> Annotation -> Annotation -> AnnotationState a (Either String Annotation)
-excludeFromUnion pos a (TypeUnion ts) = do
-    (_, (_, usts)) <- get
-    if Set.size ts == 1 then excludeFromUnion pos a $ Set.elemAt 0 ts else do
-        let (unions, simples) = partition isUnion . Set.toList . Set.map snd . Set.filter pred $ Set.map (\b -> (any isRight [sameTypes pos usts b a, sameTypes pos usts a b], b)) ts 
-        unions' <- sequence <$> mapM (excludeFromUnion pos a) unions
-        case (\x -> Set.fromList $ x ++ simples) <$> unions' of
-            Right xs -> if Set.null xs then 
-                    return . Left $ "No set matching predicate notis " ++ show a ++ "\n" ++ showPos pos
-                else return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
-            Left err -> return $ Left err
+filterUnion :: SourcePos -> UserDefinedTypes -> (Annotation -> Annotation -> Bool) -> Annotation -> Annotation -> Either [Char] Annotation
+filterUnion pos usts f a (TypeUnion ts) =
+    if Set.size ts == 1 then filterUnion pos usts f a $ Set.elemAt 0 ts else do
+        let 
+            (unions, simples) = partition isUnion . Set.toList . Set.map snd . Set.filter pred $ Set.map (\b -> (f a b, b)) ts 
+            unions' = mapM (filterUnion pos usts f a) unions in
+            case (\x -> Set.fromList $ x ++ simples) <$> unions' of
+                Right xs -> if Set.null xs then 
+                        Left $ "No set matching predicate notis " ++ show a ++ "\n" ++ showPos pos
+                    else Right $ foldr1 (mergedTypeConcrete pos usts) xs
+                Left err -> Left err
     where 
         pred (b, v) = (isUnion v && b) || not b
         isUnion = makeImpl True False
-excludeFromUnion pos a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2)
-    | id1 /= id2 = return . Left $ expectedUnion pos a b
-    | otherwise = do
-        (_, (_, usts)) <- get
-        (\case
-            Right xs -> return . Right $ NewTypeInstanceAnnotation id1 xs
-            Left err -> return $ Left err) . sequence =<< zipWithM (excludeFromUnion pos) anns1 anns2
-excludeFromUnion pos a b = return $ Right b
+filterUnion pos usts f a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2)
+    | id1 /= id2 = Left $ expectedUnion pos a b
+    | otherwise =
+        case zipWithM (filterUnion pos usts f) anns1 anns2 of
+            Right xs -> Right $ NewTypeInstanceAnnotation id1 xs
+            Left err -> Left err
+filterUnion pos usts f a b = Right b
+
+excludeSameTypes pos usts a b = any isRight 
+    [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (collectGenenrics usts a) Map.empty usts a b) $> b]
 
 accessNewType givenArgs f fid@(LhsIdentifer id pos) =
     (\case
@@ -1312,14 +1302,14 @@ getFullAnnotation fid@(LhsIdentifer id pos) givenArgs = do
 getFullAnnotation a b = error $ "Unexpected argments for getFullAnnotation [" ++ show a ++ ", " ++ show b ++ "]"
 
 modifyAccess mp pos acc whole expected given prop access accPos f = case whole of
-        g@(GenericAnnotation _ cns) -> return $ genericHas pos g prop cns
-        g@(RigidAnnotation _ cns) -> return $ genericHas pos g prop cns
-        TypeUnion{} -> f (Access access prop accPos) >>= \res -> return $ sameTypes pos mp given =<< res
-        NewTypeInstanceAnnotation{} -> f (Access access prop accPos) >>= \res -> return $ sameTypes pos mp given =<< res
-        StructAnnotation ps -> case sameTypesImpl given pos mp expected given of 
-            Right a -> return $ Right a
-            Left err -> Right <$> modifyWhole (listAccess acc) whole (mergedTypeConcrete pos mp expected given)
-        a -> return . Left $ "Cannot get " ++ show prop ++ " from type " ++ show a ++ "\n" ++ showPos pos
+    g@(GenericAnnotation _ cns) -> return $ genericHas pos g prop cns
+    g@(RigidAnnotation _ cns) -> return $ genericHas pos g prop cns
+    TypeUnion{} -> f (Access access prop accPos) >>= \res -> return $ sameTypes pos mp given =<< res
+    NewTypeInstanceAnnotation{} -> f (Access access prop accPos) >>= \res -> return $ sameTypes pos mp given =<< res
+    StructAnnotation ps -> case sameTypesImpl given pos mp expected given of 
+        Right a -> return $ Right a
+        Left err -> Right <$> modifyWhole (listAccess acc) whole (mergedTypeConcrete pos mp expected given)
+    a -> return . Left $ "Cannot get " ++ show prop ++ " from type " ++ show a ++ "\n" ++ showPos pos
 
 consistentTypesPass :: ConsistencyPass -> Node -> AnnotationState (Annotations (Finalizeable Annotation)) (Either String Annotation)
 consistentTypesPass VerifyAssumptions (DeclN (Decl lhs rhs _ pos)) = (\a b m -> mergedTypeConcrete pos m <$> a <*> b)
@@ -1394,57 +1384,35 @@ consistentTypesPass p (CreateNewType lhs@(LhsIdentifer id _) args pos) = do
             Nothing -> Left $ noTypeFound id pos
         Left err -> return $ Left err
 consistentTypesPass p (DeclN (Expr n)) = consistentTypesPass p n
-consistentTypesPass p (IfStmnt (RemoveFromUnionNode lhs ann _) ts es pos) = do
+consistentTypesPass p (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
     (_, (_, mp)) <- get
     pushScope
     typLhs <- getAnnotationState lhs
     case typLhs of
-        Right t@TypeUnion{} -> res t
-        Right t@NewTypeInstanceAnnotation{} -> res t
+        Right t -> res t
         _ -> return . Left $ expectedUnion pos lhs typLhs
     where res t = do
-            eitherAnn <- excludeFromUnion pos ann t
-            case eitherAnn of
+            usts <- getTypeMap
+            case evaluateTExprTotal pos usts tExpr t of
                 Left err -> return $ Left err
                 Right ann' -> do
                     insertAnnotation lhs $ Finalizeable False ann'
                     mapM_ getAssumptionType ts
-                    t <- sequence <$> mapM (consistentTypesPass p) ts
+                    ts' <- sequence <$> mapM (consistentTypesPass p) ts
                     popScope
                     pushScope
-                    insertAnnotation lhs (Finalizeable False ann)
-                    mapM_ getAssumptionType es
-                    e <- sequence <$> mapM (consistentTypesPass p) es
-                    popScope
-                    let res = case (t, e) of
-                            (Right b, Right c) -> Right $ AnnotationLiteral "_"
-                            (Left a, _) -> Left a
-                            (_, Left a) -> Left a
-                    return res
-consistentTypesPass p (IfStmnt (CastNode lhs ann _) ts es pos) = do
-    (_, (_, mp)) <- get
-    pushScope
-    insertAnnotation lhs (Finalizeable False ann)
-    mapM_ getAssumptionType ts
-    t <- sequence <$> mapM (consistentTypesPass p) ts
-    popScope
-    pushScope
-    typLhs <- getAnnotationState lhs
-    case typLhs of
-        Right ts@TypeUnion{} -> do
-            eitherAnn <- excludeFromUnion pos ann ts
-            case eitherAnn of
-                Right ann -> insertAnnotation lhs $ Finalizeable False ann
-                Left err -> return ann
-        _ -> return ann
-    mapM_ getAssumptionType es
-    e <- sequence <$> mapM (consistentTypesPass p) es
-    popScope
-    let res = case (t, e) of
-            (Right b, Right c) -> Right $ AnnotationLiteral "_"
-            (Left a, _) -> Left a
-            (_, Left a) -> Left a
-    return res
+                    case evaluateTExprTotal pos usts (negateDeduction tExpr) t of
+                        Right ann' -> do
+                            insertAnnotation lhs $ Finalizeable False ann'
+                            mapM_ getAssumptionType es
+                            e <- sequence <$> mapM (consistentTypesPass p) es
+                            popScope
+                            let res = case (ts', e) of
+                                    (Right b, Right c) -> Right $ AnnotationLiteral "_"
+                                    (Left a, _) -> Left a
+                                    (_, Left a) -> Left a
+                            return res
+                        Left err -> return $ Left err
 consistentTypesPass p (IfStmnt cond ts es pos) = do
     (_, (_, mp)) <- get
     c <- consistentTypesPass p cond
@@ -1689,5 +1657,5 @@ typeCheckedScope program =
         lifted = evalState (liftLambda restProgram) (0, [])
         (_metProgram, restProgram) = typeNodes program
         metProgram = _metProgram ++ predefinedTypeNodes
-        typesPos = typeMap $ metProgram
+        typesPos = typeMap metProgram
         types = Map.map fst typesPos

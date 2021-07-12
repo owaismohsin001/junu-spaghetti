@@ -47,6 +47,7 @@ data Keyword =
     | For
     | Newtype
     | Is
+    | Not
     | Notis
     deriving(Show, Eq, Enum)
 
@@ -195,15 +196,22 @@ modOp "%" = "mod"
 modOp "*" = "mul"
 modOp "is" = "is"
 modOp "notis" = "notis"
+modOp a = error $ "Undefined symbol " ++ show a
 
 modUnaryOp :: String -> String
 modUnaryOp "!" = "not"
 modUnaryOp "-" = "neg"
+modUnaryOp a = error $ "Undefined symbol " ++ show a
+
+typeDeductionExprParser = choice $ map try [
+    (\(TypeDeductionNode lhs tExpr pos) -> TypeDeductionNode lhs (NegateTypeDeduction tExpr) pos) <$> (keyword Not *> spaces *> Text.Megaparsec.Char.string "(" *> spaces *> typeDeductionExprParser <* spaces <* Text.Megaparsec.Char.string ")"),
+    binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Is <* spaces) (\(Identifier i ipos) _ b pos -> TypeDeductionNode (LhsIdentifer i ipos) (IsType (LhsIdentifer i ipos) b) pos),
+    binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Notis <* spaces) (\(Identifier i ipos) _ b pos -> TypeDeductionNode (LhsIdentifer i ipos) (NotIsType (LhsIdentifer i ipos) b) pos)
+    ]
 
 exprParser :: Parser Node
 exprParser =  
-    try (binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Is <* spaces) (\(Identifier i ipos) _ b pos -> CastNode (LhsIdentifer i ipos) b pos))
-    <|> try (binOpGeneralizedOne id littleId annotationParser (spaces *> keyword Notis <* spaces) (\(Identifier i ipos) _ b pos -> RemoveFromUnionNode (LhsIdentifer i ipos) b pos))
+    ((\pos ded -> TypeDeductionNode (getFirstDeductionLhs ded) ded pos) <$> getSourcePos <*> (deductionNodesToDeductions <$> typeDeductionExprParser))
     <|> binOp modOp compExprParser (Text.Megaparsec.Char.string "&" <|> Text.Megaparsec.Char.string "|") binCall
 
 compExprParser :: Parser Node

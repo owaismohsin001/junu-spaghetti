@@ -28,7 +28,7 @@ generateLuaDecl usts (OpenFunctionDecl lhs _ _) = generateLhsLua usts lhs ++ " =
 generateLuaDecl usts (ImplOpenFunction lhs args _ body _ pos) = 
     "newOpenInstance(" ++ show lhs ++ 
     ", function(" ++ intercalate ", " (map (show . fst) args) ++ ") return " ++
-    intercalate " and " (map (\(lhs, ann) -> generateLua usts $ CastNode lhs ann pos) args) ++ 
+    intercalate " and " (map (\(lhs, ann) -> generateLua usts $ TypeDeductionNode lhs (IsType lhs ann) pos) args) ++ 
     " end, function(" ++ intercalate ", " (map (show . fst) args) ++ ")\n" ++ 
     indent (intercalate "\n" $ map (generateLua usts) body) ++ "\nend)"
 generateLuaDecl usts (NewTypeDecl lhs (NewTypeAnnotation id args mp) _) = 
@@ -68,8 +68,11 @@ generateLua usts (Access n lhs _) = generateLua usts n ++ "." ++ show lhs
 generateLua usts (IfStmnt c ts es _) = "if " ++ generateLua usts c ++ " then\n" ++ indent (intercalate "\n" (map (forwardDeclareWholeLua usts) ts ++ map (generateLua usts) ts)) ++ "\nelse\n" ++ indent (intercalate "\n" (map (forwardDeclareWholeLua usts) es ++ map (generateLua usts) es)) ++ "\nend"
 generateLua usts (IfExpr c t e _) = generateLua usts c ++ " and " ++ generateLua usts t ++ " or " ++ generateLua usts e
 generateLua usts (CreateNewType lhs args _) = generateLhsLua usts lhs ++ "(" ++ intercalate ", " (map (generateLua usts) args) ++ ")"
-generateLua usts (CastNode lhs ann _) = "IsType(" ++ generateLhsLua usts lhs ++ ", " ++ generateLuaTypes usts ann ++ ")"
-generateLua usts (RemoveFromUnionNode lhs ann _) = "not IsType(" ++ generateLhsLua usts lhs ++ ", " ++ generateLuaTypes usts ann ++ ")"
+generateLua usts (TypeDeductionNode _ tExpr _) = generateTypeDeductionLua usts tExpr 
+
+generateTypeDeductionLua usts (IsType lhs ann) = "IsType(" ++ generateLhsLua usts lhs ++ ", " ++ generateLuaTypes usts ann ++ ")"
+generateTypeDeductionLua usts (NotIsType lhs ann) = "not IsType(" ++ generateLhsLua usts lhs ++ ", " ++ generateLuaTypes usts ann ++ ")"
+generateTypeDeductionLua usts (NegateTypeDeduction typ) = "not " ++ generateTypeDeductionLua usts typ
 
 forwardDeclareLua :: UserDefinedTypes -> Node -> Set.Set String
 forwardDeclareLua usts (DeclN (StructDef lhs ann _)) = Set.fromList ["Is" ++ generateLhsLua usts lhs, generateLhsLua usts lhs]

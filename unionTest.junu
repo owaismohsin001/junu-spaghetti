@@ -14,7 +14,7 @@ res = concat(res, Array(sres))
 println(res)
 
 len(xs: Nil | Ls(n{})) => Int {
-    if xs is Nil { return 0 }
+    if not (not (xs is Nil)) { return 0 }
     return len(xs.res)+1
 }
 

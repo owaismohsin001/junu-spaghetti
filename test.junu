@@ -148,7 +148,7 @@ let tres = snd(s)
 write("tres is: ")
 println(tres)
 
-let idresf = (s: Tup(q{}, r{})) => identity(apply(identity, swapG(s, (a: oi{}, b: fi{}) => Tup(a, b))))
+let idresf = (s: Tup(q{}, k{})) => identity(apply(identity, swapG(s, (a: oi{}, b: fi{}) => Tup(a, b))))
 let idres = idresf(s)
 
 write("idres is: ")
