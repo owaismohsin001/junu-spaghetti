@@ -781,7 +781,7 @@ getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft po
             let b = makeFunAnnotation args ret
             case getSpecificationRules pos Set.empty Map.empty mp ft implft of
                 Right base -> 
-                    case getSpecificationRules pos Set.empty base mp a b of
+                    case getSpecificationRules pos (Set.unions $ map (collectGenenrics mp) (ret:map snd args)) base mp a b of
                         Left err -> return $ Left err
                         Right res -> 
                                     let 
@@ -806,7 +806,7 @@ getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
                         Left a -> return . Left $ "Could not infer the return type: " ++ a ++ "\n" ++ showPos pos
                         Right inferredRetType ->
                             let spfun = makeFunAnnotation args inferredRetType in
-                            case getSpecificationRules pos Set.empty base mp fun spfun of
+                            case getSpecificationRules pos (Set.unions $ map (collectGenenrics mp) (inferredRetType:map snd args)) base mp fun spfun of
                                 Left err -> return $ Left err
                                 Right res -> 
                                     let 
