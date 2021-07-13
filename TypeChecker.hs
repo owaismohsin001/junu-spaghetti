@@ -305,21 +305,23 @@ addTypeVariableGeneralized n pos defs stmnt k v = do
         Nothing -> addToMap a rs mp usts k v
         Just a -> do
             case sameTypesNoUnionSpec pos usts a v of
-                Left err -> if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
-                    case Map.lookup k rs of
-                        Just st -> if Set.member v st then addToMap a rs mp usts k v else return $ Left err
-                        Nothing -> 
-                            if n > 0 then do
-                                reshuffleTypes pos defs
-                                addTypeVariableGeneralized (n-1) pos defs stmnt k v
-                                else return $ Left err
                 Right a -> addToMap a rs mp usts k v
+                Left err -> lastResort a rs mp usts (Left err)
     where
         addToMap a rs mp usts k v = do
             put (a, ((rs, Map.insert k v mp), usts))
             stmnt
             reshuffleTypes pos defs
             return $ Right v
+        
+        lastResort a rs mp usts x = if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
+            case Map.lookup k rs of
+                Just st -> if Set.member v st then addToMap a rs mp usts k v else return x
+                Nothing -> 
+                    if n > 0 then do
+                        reshuffleTypes pos defs
+                        addTypeVariableGeneralized (n-1) pos defs stmnt k v
+                        else return x
 
 addTypeVariable :: SourcePos -> Set.Set Annotation -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
 addTypeVariable pos defs = addTypeVariableGeneralized 5 pos defs (updateRelations pos defs)
@@ -1045,8 +1047,14 @@ mergedType gs crt pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs
     if length as == length bs then FunctionAnnotation (init ls) (last ls)
     else createUnion a b
     where ls = zipWith (mergedType gs crt pos mp) (as ++ [ret1]) (bs ++ [ret2])
+mergedType gs crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+    | id1 /= id2 = createUnion a b
+    | otherwise = mergedType gs crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
 mergedType gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
     | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 ls
+    | e1 == e2 && length as1 < length as2 = case flip (mergedType gs crt pos mp) b <$> fullAnotationFromInstanceFree pos mp a of
+        Right a -> a
+        Left  _ -> createUnion a b
     | otherwise = createUnion a b
     where ls = zipWith (mergedType gs crt pos mp) as1 as2
 mergedType gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
