@@ -400,7 +400,9 @@ applyConstraintState pos defs ann (ConstraintHas lhs cn) =
             g@(RigidAnnotation id cns) -> case genericHas pos g lhs cns of
                 Right ann -> applyConstraintState pos defs ann cn
                 Left err -> return $ Left err
-            t@TypeUnion{} -> typeUnionHas pos defs t cn
+            t@TypeUnion{} -> typeUnionHas pos defs t cn >>= \case
+                Right ann -> applyConstraintState pos defs ann cn
+                Left err -> return $ Left err
             a -> return . Left $ "Can't search for field " ++ show lhs ++ " in " ++ show a ++ "\n" ++ showPos pos
 applyConstraintState pos defs ann2 (AnnotationConstraint ann1) = do
     a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos defs ann2 ann1 *> addRelation pos defs ann1 ann2 $> Right ann1 else addTypeVariable pos defs ann1 ann2
@@ -467,8 +469,8 @@ specifyInternal pos defs a@(Annotation id1) b@(Annotation id2)
             Nothing -> undefined
         Nothing -> return $ Left $ noTypeFound id1 pos) =<< getTypeMap
 specifyInternal pos defs a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
-        Just a' -> specifyInternal pos defs a' b
-        Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
+    Just a' -> specifyInternal pos defs a' b
+    Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
 specifyInternal pos defs a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
     Just b' -> specifyInternal pos defs a b'
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
@@ -486,6 +488,7 @@ specifyInternal pos defs a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
         Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos defs b) cns
 specifyInternal pos defs a@(StructAnnotation ms1) b@(StructAnnotation ms2)
     | Map.size ms1 /= Map.size ms2 = return . Left $ unmatchedType a b pos
+    | Map.null ms1 && Map.null ms2 = return $ Right b
     | Set.fromList (Map.keys ms1) == Set.fromList (Map.keys ms2) = (\case
         Right _ -> return $ Right b
         Left err -> return $ Left err) . sequence =<< zipWithM (specifyInternal pos defs) (Map.elems ms1) (Map.elems ms2)
@@ -518,16 +521,19 @@ specifyInternal pos defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInsta
                 Right _ -> return $ Right b
                 Left err -> return $ Left err
                 ) . sequence =<< zipWithM (specifyInternal pos defs) anns1 anns2
-specifyInternal pos defs a@(TypeUnion as) b@(TypeUnion bs) = do
+specifyInternal pos defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
     mp <- getTypeMap
-    case (foldr1 (mergedTypeConcrete pos mp) as, foldr1 (mergedTypeConcrete pos mp) bs) of
+    case (foldr1 (mergedTypeConcrete pos mp) _as, foldr1 (mergedTypeConcrete pos mp) _bs) of
         (TypeUnion as, TypeUnion bs) -> do
-            xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
+            xs <- sequence <$> mapM (f mp $ Set.toList _as) (Set.toList _bs)
             case xs of
                 Right _ -> return $ Right b
-                Left err -> 
-                    if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
-                    else distinctUnion err (Set.toList $ collectGenenrics mp a)
+                Left err -> do
+                    xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
+                    case xs of
+                        Right _ -> return $ Right b
+                        Left err -> if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
+                            else distinctUnion err (Set.toList $ collectGenenrics mp a)
         (a, b) -> specifyInternal pos defs a b
     where
         f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos defs x v1) ps2
@@ -536,8 +542,8 @@ specifyInternal pos defs a@(TypeUnion as) b@(TypeUnion bs) = do
         distinctUnion err [] = return $ Left err
         distinctUnion _ xs = do
             usts <- getTypeMap
-            c1 <- specifyInternal pos defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) (Set.toList as))
-            c2 <- sequence <$> zipWithM (flip (specifyInternal pos defs)) (tail xs) (drop (length xs) (Set.toList as))
+            c1 <- specifyInternal pos defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) (Set.toList _as))
+            c2 <- sequence <$> zipWithM (flip (specifyInternal pos defs)) (tail xs) (drop (length xs) (Set.toList _as))
             case (c1, c2) of
                 (Right _, Right _) -> return $ Right $ mergedTypeConcrete pos usts b b
                 (Left err, _) -> return $ Left err
