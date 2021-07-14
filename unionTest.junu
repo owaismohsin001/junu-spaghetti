@@ -18,8 +18,8 @@ len(xs: Nil | Ls(n{})) => Int {
     return len(xs.res)+1
 }
 
-let ins = (a: a{}, ls: Ls(b{})) => Ls(a, ls)
+let ins = (a: a{}, ls: Nil | Ls(b{})) => Ls(a, ls)
 
-let xs = Ls("d", Ls("ddjn", Ls("ddjn", {})))
+let xs = Ls("d", ins("ddjn", Ls("ddjn", {})))
 xs = ins("ok", xs)
 println(len(xs))
