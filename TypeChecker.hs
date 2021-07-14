@@ -162,7 +162,7 @@ firstInferrableReturn pos (IfStmnt cond ts es _:xs) = do
                 Right a -> return $ Right a
                 Left err -> do
                     put scope
-                    return $ Left err
+                    firstInferrableReturn pos xs
 firstInferrableReturn pos (n@(DeclN (Decl _ rhs _ _)):xs) = do
     getAssumptionType n
     as <- firstInferrableReturn pos [rhs] 
@@ -173,7 +173,7 @@ firstInferrableReturn pos (n@(DeclN (Assign _ rhs _)):xs) = do
     as <- firstInferrableReturn pos [rhs] 
     bs <- firstInferrableReturn pos xs
     return $ mapLeft as (const bs)
-firstInferrableReturn pos ((Return a _):_) = return $ Right a
+firstInferrableReturn _ ((Return a _):_) = return $ Right a
 firstInferrableReturn pos (_:xs) = firstInferrableReturn pos xs
 
 isGeneric :: P.SourcePos -> UserDefinedTypes -> Annotation -> Bool
@@ -299,7 +299,7 @@ reshuffleTypes pos defs = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (cha
 
 sameTypesNoUnionSpec = sameTypesGeneric (False, True, Map.empty)
 
-addTypeVariableGeneralized n pos defs stmnt k v = do
+addTypeVariableGeneralized pos defs stmnt k v = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup k mp of
         Nothing -> addToMap a rs mp usts k v
@@ -317,14 +317,10 @@ addTypeVariableGeneralized n pos defs stmnt k v = do
         lastResort a rs mp usts x = if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
             case Map.lookup k rs of
                 Just st -> if Set.member v st then addToMap a rs mp usts k v else return x
-                Nothing -> 
-                    if n > 0 then do
-                        reshuffleTypes pos defs
-                        addTypeVariableGeneralized (n-1) pos defs stmnt k v
-                        else return x
+                Nothing -> return x
 
 addTypeVariable :: SourcePos -> Set.Set Annotation -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
-addTypeVariable pos defs = addTypeVariableGeneralized 5 pos defs (updateRelations pos defs)
+addTypeVariable pos defs = addTypeVariableGeneralized pos defs (updateRelations pos defs)
 
 -- This is written horribly, rewrite it
 updateSingleRelation pos defs r = do
@@ -343,7 +339,7 @@ updateSingleRelation pos defs r = do
             mls' = case fnv of 
                 Just a -> map (\(k, _) -> (k, a)) mls
                 Nothing -> []
-            f = addTypeVariableGeneralized 5 pos defs (return $ Right ())
+            f = addTypeVariableGeneralized pos defs (return $ Right ())
 
             firstNonUnderscore [] = Nothing 
             firstNonUnderscore ((_, AnnotationLiteral "_"):xs) = firstNonUnderscore xs
