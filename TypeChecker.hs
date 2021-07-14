@@ -89,8 +89,8 @@ rigidizeTypeVariables usts (TypeUnion ts) = TypeUnion $ Set.map (rigidizeTypeVar
 rigidizeTypeVariables usts OpenFunctionAnnotation{} = error "Can't use rigidizeVariables with open functions"
 
 unrigidizeTypeConstraints :: UserDefinedTypes -> Constraint -> Constraint
-unrigidizeTypeConstraints usts (ConstraintHas lhs cs) = ConstraintHas lhs $ rigidizeTypeConstraints usts cs 
-unrigidizeTypeConstraints usts (AnnotationConstraint ann) = AnnotationConstraint $ rigidizeTypeVariables usts ann
+unrigidizeTypeConstraints usts (ConstraintHas lhs cs) = ConstraintHas lhs $ unrigidizeTypeConstraints usts cs 
+unrigidizeTypeConstraints usts (AnnotationConstraint ann) = AnnotationConstraint $ unrigidizeTypeVariables usts ann
 
 unrigidizeTypeVariables :: UserDefinedTypes -> Annotation -> Annotation
 unrigidizeTypeVariables usts fid@(GenericAnnotation id cns) = fid
@@ -394,7 +394,12 @@ applyConstraintState pos defs ann (ConstraintHas lhs cn) =
                                 Nothing -> return . Left $ "Could not find " ++ show lhs ++ " in " ++ show ps ++ "\n" ++ showPos pos
                             ) 
                         (LhsIdentifer id pos)
-            g@(GenericAnnotation id cns) -> return $ genericHas pos mp lhs cns
+            g@(GenericAnnotation id cns) -> case genericHas pos g lhs cns of
+                Right ann -> applyConstraintState pos defs ann cn
+                Left err -> return $ Left err
+            g@(RigidAnnotation id cns) -> case genericHas pos g lhs cns of
+                Right ann -> applyConstraintState pos defs ann cn
+                Left err -> return $ Left err
             t@TypeUnion{} -> typeUnionHas pos defs t cn
             a -> return . Left $ "Can't search for field " ++ show lhs ++ " in " ++ show a ++ "\n" ++ showPos pos
 applyConstraintState pos defs ann2 (AnnotationConstraint ann1) = do
@@ -808,7 +813,7 @@ getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft po
                                         aeq = Set.fromList $ Map.keys $ Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) res
                                         beq = Set.fromList $ Map.keys $ Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) base
                                     in
-                                    if aeq == beq then 
+                                    if Set.size aeq >= Set.size beq then 
                                         Right <$> insertAnnotation lhs (Finalizeable True (OpenFunctionAnnotation anns ret' ft $ implft:impls))
                                     else return . Left $ "Forbidden to specify specified type variables\n" ++ showPos pos
                 Left err -> return $ Left err
@@ -830,10 +835,10 @@ getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
                                 Left err -> return $ Left err
                                 Right res -> 
                                     let 
-                                        a = Set.fromList (Map.keys (Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) res))
-                                        b = Set.fromList (Map.keys (Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) base))
+                                        a = Set.fromList $ Map.keys $ Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) res
+                                        b = Set.fromList $ Map.keys $ Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) base
                                     in
-                                    if a == b then 
+                                    if Set.size a >= Set.size b then 
                                         Right <$> insertAnnotation lhs (Finalizeable True (OpenFunctionAnnotation anns ret' ft $ implft:impls))
                                     else return . Left $ "Forbidden to specify specified type variables\n" ++ showPos pos
                 Left err -> return $ Left err
@@ -985,6 +990,7 @@ getAssumptionType (Identifier x pos) = do
         Left err  -> return $ Left err
 getAssumptionType n = error $ "No arument of the follwoing type expected " ++ show n
 
+genericHas :: SourcePos -> Annotation -> Lhs -> [Constraint] -> Either [Char] Annotation
 genericHas pos g givenLhs [] = Left $ "Could not find " ++ show givenLhs ++ " in " ++ show g ++ "\n" ++ showPos pos
 genericHas pos g givenLhs ((ConstraintHas lhs (AnnotationConstraint ann)):xs) = if lhs == givenLhs then Right ann else genericHas pos g givenLhs xs
 
@@ -1366,7 +1372,7 @@ consistentTypesPass p (DeclN (ImplOpenFunction lhs args Nothing exprs implft pos
                 Right inferredRetType ->
                     case specify pos defs Map.empty mp fun (makeFunAnnotation args inferredRetType) of
                         Left err -> return $ Left err
-                        Right ann -> consistentTypesPass p $ FunctionDef args (Just inferredRetType) exprs pos
+                        Right (ann, defs) -> consistentTypesPass p $ FunctionDef args (Just inferredRetType) exprs pos
         Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
 consistentTypesPass p (DeclN (OpenFunctionDecl lhs ann pos)) =  do
     m <- getTypeMap

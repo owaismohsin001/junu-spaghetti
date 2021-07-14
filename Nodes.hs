@@ -31,8 +31,8 @@ data Annotation =
 data AnnotationNoImpl = 
     AnnotationNoImpl String
     | AnnotationLiteralNoImpl String
-    | GenericAnnotationNoImpl String [Constraint]
-    | RigidAnnotationNoImpl String [Constraint]
+    | GenericAnnotationNoImpl String
+    | RigidAnnotationNoImpl String
     | FunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl 
     | StructAnnotationNoImpl (Map.Map Lhs AnnotationNoImpl)
     | OpenFunctionAnnotationNoImpl [AnnotationNoImpl] AnnotationNoImpl AnnotationNoImpl
@@ -44,8 +44,8 @@ data AnnotationNoImpl =
 toAnnotationNoImpl :: Annotation -> AnnotationNoImpl
 toAnnotationNoImpl (Annotation a) = AnnotationNoImpl a
 toAnnotationNoImpl (AnnotationLiteral a) = AnnotationLiteralNoImpl a
-toAnnotationNoImpl (RigidAnnotation a b) = RigidAnnotationNoImpl a b
-toAnnotationNoImpl (GenericAnnotation a b) = GenericAnnotationNoImpl a b
+toAnnotationNoImpl (RigidAnnotation a _) = RigidAnnotationNoImpl a 
+toAnnotationNoImpl (GenericAnnotation a _) = GenericAnnotationNoImpl a 
 toAnnotationNoImpl (FunctionAnnotation a b) = FunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b)
 toAnnotationNoImpl (StructAnnotation map) = StructAnnotationNoImpl (Map.map toAnnotationNoImpl map)
 toAnnotationNoImpl (OpenFunctionAnnotation a b c _) = OpenFunctionAnnotationNoImpl (map toAnnotationNoImpl a) (toAnnotationNoImpl b) (toAnnotationNoImpl c)
