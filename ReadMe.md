@@ -75,6 +75,31 @@ x: (Int | String)
 ```
 You must note that a union can only be passed to a function that is either polymorphic over them or expects exactly the unions that are sent to it, this is done in order to preserve the soundness of the type system. 
 
+## Narrowing Unions
+Given a type, `Int | String`, there are ways to operate on it that can give you a singular type, and the main approach of doing that is using if statemnts, like such
+```
+let f = (a: Int | String) => {
+    if a is Int {
+        println(a+2)
+    } else {
+        println("Hello " + a)
+    }
+    return {}
+}
+```
+This, when invoked with like this `f("World")`, prints `Hello World` but when invoked like this `f(3)` prints `5`. As you might have noticed other than narrowing the type of `a` to `Int` in the frst block, it narrowed down the type of the `else` block to `String` as well. This functions just as well with early returns too, for instance the function above can be re-written as
+```
+let f = (a: Int | String) => {
+    if a is Int {
+        println(a+2)
+        return {}
+    }
+    println("Hello " + a)
+    return {}
+}
+```
+and be typed just as well.
+
 ## Named Types
 Named types allow for generic recursive structures, they are much like a pattern in Haskell but they themselves have a type. Here's the type they have. Here's an example of a named type, with the name `Pair`
 ```
