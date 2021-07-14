@@ -272,7 +272,7 @@ collectGenenrics :: UserDefinedTypes -> Annotation -> Set.Set Annotation
 collectGenenrics usts fid@(GenericAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraints usts) cns)
 collectGenenrics usts fid@(RigidAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraints usts) cns)
 collectGenenrics usts AnnotationLiteral{} = Set.empty
-collectGenenrics usts fid@(Annotation ident) = maybe (error "Run your passes in order. You should know that this doesn't exists by now") (collectGenenrics usts) (Map.lookup (LhsIdentifer ident (SourcePos "" (mkPos 0) (mkPos 0))) usts)
+collectGenenrics usts fid@(Annotation ident) = maybe (error "Run your passes in order. You should know that this doesn't exists by now") (const Set.empty) (Map.lookup (LhsIdentifer ident (SourcePos "" (mkPos 0) (mkPos 0))) usts)
 collectGenenrics usts (NewTypeAnnotation id anns annMap) = Set.unions (Set.map (collectGenenrics usts) (Set.fromList anns)) `Set.union` foldl1 Set.union (map (collectGenenrics usts) (Map.elems annMap))
 collectGenenrics usts (NewTypeInstanceAnnotation id anns) = Set.unions $ Set.map (collectGenenrics usts) (Set.fromList anns)
 collectGenenrics usts (FunctionAnnotation args ret) = Set.empty
