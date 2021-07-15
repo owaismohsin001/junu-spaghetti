@@ -16,11 +16,12 @@ import TypeChecker
 import Data.Maybe
 import System.Process
 
+generateLhsLua :: UserDefinedTypes -> Lhs -> String
 generateLhsLua _ (LhsIdentifer id _) = id
 generateLhsLua usts (LhsAccess accNode lhs _) = generateLua usts accNode ++ "." ++ show lhs
 
 generateLuaDecl :: UserDefinedTypes -> Decl -> [Char]
-generateLuaDecl usts (Decl lhs rhs _ _) = "local " ++ generateLhsLua usts lhs ++ " = " ++ generateLua usts rhs
+generateLuaDecl usts (Decl lhs rhs _ _) = generateLhsLua usts lhs ++ " = " ++ generateLua usts rhs
 generateLuaDecl usts (Assign lhs rhs _) = generateLhsLua usts lhs ++ " = " ++ generateLua usts rhs
 generateLuaDecl usts (FunctionDecl lhs _ _) = "local " ++ generateLhsLua usts lhs
 generateLuaDecl usts (StructDef lhs ann _) = "Is" ++ generateLhsLua usts lhs ++ " = " ++ generateLuaTypes usts ann
@@ -61,6 +62,7 @@ generateLua usts (DeclN decl) = generateLuaDecl usts  decl
 generateLua usts (Identifier id _) = id
 generateLua usts (Lit lit) = generateLuaLit lit
 generateLua usts (FunctionDef args _ body _) = "function(" ++ intercalate ", " (map (generateLhsLua usts . fst) args) ++ ")\n" ++ indent (intercalate "\n" (map (forwardDeclareWholeLua usts) body ++ map (generateLua usts) body)) ++ "\nend"
+generateLua usts (Return (Return n _) _) = "return " ++ generateLua usts n
 generateLua usts (Return n _) = "return " ++ generateLua usts n
 generateLua usts (Call e as _) = generateLua usts e ++ "(" ++ intercalate ", " (map (generateLua usts) as) ++ ")"
 generateLua usts (StructN (Struct mp _)) = "{" ++ intercalate ", " (Map.elems $ Map.mapWithKey (\k v -> generateLhsLua usts k ++ " = " ++ generateLua usts v) mp) ++ "}"
@@ -70,6 +72,7 @@ generateLua usts (IfExpr c t e _) = generateLua usts c ++ " and " ++ generateLua
 generateLua usts (CreateNewType lhs args _) = generateLhsLua usts lhs ++ "(" ++ intercalate ", " (map (generateLua usts) args) ++ ")"
 generateLua usts (TypeDeductionNode _ tExpr _) = generateTypeDeductionLua usts tExpr 
 
+generateTypeDeductionLua :: UserDefinedTypes -> TypeDeductionExpr -> [Char]
 generateTypeDeductionLua usts (IsType lhs ann) = "IsType(" ++ generateLhsLua usts lhs ++ ", " ++ generateLuaTypes usts ann ++ ")"
 generateTypeDeductionLua usts (NotIsType lhs ann) = "not IsType(" ++ generateLhsLua usts lhs ++ ", " ++ generateLuaTypes usts ann ++ ")"
 generateTypeDeductionLua usts (NegateTypeDeduction typ) = "not " ++ generateTypeDeductionLua usts typ
