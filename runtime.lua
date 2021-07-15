@@ -151,6 +151,13 @@ concat = function(a, b)
     return Array({_wrapped = new_table})
 end
 
+index = function(a, i)
+    local ax = getWrappedArray(a)
+    local v = ax[i]
+    if v == nil then return {} end
+    return v
+end
+
 write = function(a)
     if type(a) == "table" and a._type and a._type == "Array" then
         io.write("[")

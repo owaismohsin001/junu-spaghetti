@@ -23,3 +23,14 @@ let ins = (a: a{}, ls: Nil | Ls(b{})) => Ls(a, ls)
 let xs = Ls("d", ins("ddjn", Ls("ddjn", {})))
 xs = ins("ok", xs)
 println(len(xs))
+
+if res notis Nil {
+    let x = index(res, 3)
+    if x is String {
+        println(x + "hoo")
+    } else if x is Int {
+        println(x+1)
+    } else {
+        println(x)
+    }
+}

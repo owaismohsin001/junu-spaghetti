@@ -528,18 +528,24 @@ specifyInternal pos defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
                     xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
                     case xs of
                         Right _ -> return $ Right b
-                        Left err -> if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
-                            else distinctUnion err (Set.toList $ collectGenenrics mp a)
+                        Left err ->
+                            if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then 
+                                return $ Left err 
+                            else distinctUnion mp err (Set.toList $ collectGenenrics mp a)
         (a, b) -> specifyInternal pos defs a b
     where
         f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos defs x v1) ps2
         typeUnionList (TypeUnion xs) action = action $ Set.toList xs
         typeUnionList a action = specifyInternal pos defs a b
-        distinctUnion err [] = return $ Left err
-        distinctUnion _ xs = do
+        g mp ps2 v1 = map (\x -> (specifyInternal pos defs x v1, x)) ps2
+        isRightLifted s = isRight <$> s
+        distinctUnion _ err [] = return $ Left err
+        distinctUnion mp _ xs = do
+            let as' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _as)
+            let bs' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _bs)
             usts <- getTypeMap
-            c1 <- specifyInternal pos defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) (Set.toList _as))
-            c2 <- sequence <$> zipWithM (flip (specifyInternal pos defs)) (tail xs) (drop (length xs) (Set.toList _as))
+            c1 <- specifyInternal pos defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) as')
+            c2 <- sequence <$> zipWithM (flip (specifyInternal pos defs)) (tail xs) (drop (length xs) as')
             case (c1, c2) of
                 (Right _, Right _) -> return $ Right $ mergedTypeConcrete pos usts b b
                 (Left err, _) -> return $ Left err
@@ -858,12 +864,12 @@ getAssumptionType (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
             t <- sequence <$> mapM getAssumptionType ts
             popScope
             pushScope
-            case typLhs of
-                Right ts@TypeUnion{} -> do
+            case es of
+                [] -> return ann
+                _ -> do
                     case evaluateTExprTotal pos mp (negateDeduction tExpr) =<< typLhs of
                         Right remAnn -> insertAnnotation lhs $ Finalizeable False remAnn
                         Left _ -> return ann
-                _ -> return ann
             e <- sequence <$> mapM getAssumptionType es
             popScope
             let res = case (t, e) of
@@ -1015,6 +1021,7 @@ baseMapping = Map.fromList $ map (second (Finalizeable True)) [
     (LhsIdentifer "duplicate" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
     (LhsIdentifer "write" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (StructAnnotation Map.empty)),
     (LhsIdentifer "concat" sourcePos, FunctionAnnotation [TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [GenericAnnotation "a" []]]),TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [GenericAnnotation "b" []]])] (TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [TypeUnion (Set.fromList [GenericAnnotation "a" [],GenericAnnotation "b" []])]]))),
+    (LhsIdentifer "index" sourcePos, FunctionAnnotation [NewTypeInstanceAnnotation "Array" [GenericAnnotation "a" []],AnnotationLiteral "Int"] (TypeUnion $ Set.fromList [Annotation "Nil", GenericAnnotation "a" []])),
     (LhsIdentifer "sub" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mod" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mul" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
@@ -1262,27 +1269,31 @@ sameTypes = sameTypesGeneric (True, False, Map.empty)
 getTypeMap :: State (a, (b, c)) c
 getTypeMap = gets (snd . snd)
 
-filterUnion :: SourcePos -> UserDefinedTypes -> (Annotation -> Annotation -> Bool) -> Annotation -> Annotation -> Either [Char] Annotation
-filterUnion pos usts f a (TypeUnion ts) =
-    if Set.size ts == 1 then filterUnion pos usts f a $ Set.elemAt 0 ts else do
-        let 
-            (unions, simples) = partition isUnion . Set.toList . Set.map snd . Set.filter pred $ Set.map (\b -> (f a b, b)) ts 
-            unions' = mapM (filterUnion pos usts f a) unions in
-            case (\x -> Set.fromList $ x ++ simples) <$> unions' of
-                Right xs -> if Set.null xs then 
+filterUnion pos usts f a b = case b of 
+    TypeUnion{} -> go pos usts f a b 
+    NewTypeInstanceAnnotation{} -> go pos usts f a b
+    _ -> if f a b then Left $ unmatchedType a b pos else Right a
+    where
+        go :: SourcePos -> UserDefinedTypes -> (Annotation -> Annotation -> Bool) -> Annotation -> Annotation -> Either [Char] Annotation
+        go pos usts f a (TypeUnion ts) =
+            if Set.size ts == 1 then go pos usts f a $ Set.elemAt 0 ts else do
+                let
+                    (unions, simples) = partition isUnion . Set.toList . Set.map snd . Set.filter pred $ Set.map (\b -> (f a b, b)) ts 
+                    unions' = map snd $ filter (isLeft . fst) $ map (\x -> (go pos usts f a x, x)) unions in
+                    let xs = Set.fromList $ unions' ++ simples in
+                    if Set.null xs then 
                         Left $ "No set matching predicate notis " ++ show a ++ "\n" ++ showPos pos
                     else Right $ foldr1 (mergedTypeConcrete pos usts) xs
-                Left err -> Left err
-    where 
-        pred (b, v) = (isUnion v && b) || not b
-        isUnion = makeImpl True False
-filterUnion pos usts f a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2)
-    | id1 /= id2 = Left $ expectedUnion pos a b
-    | otherwise =
-        case zipWithM (filterUnion pos usts f) anns1 anns2 of
-            Right xs -> Right $ NewTypeInstanceAnnotation id1 xs
-            Left err -> Left err
-filterUnion pos usts f a b = Right b
+            where 
+                pred (b, v) = (isUnion v && b) || not b
+                isUnion = makeImpl True False
+        go pos usts f a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2)
+            | id1 /= id2 = Left $ expectedUnion pos a b
+            | otherwise =
+                case zipWithM (go pos usts f) anns1 anns2 of
+                    Right xs -> Right $ NewTypeInstanceAnnotation id1 xs
+                    Left err -> Left err
+        go pos usts f a b = if f a b then Right a else Left $ unmatchedType a b pos
 
 excludeSameTypes pos usts a b = any isRight 
     [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (collectGenenrics usts a) Map.empty usts a b) $> b]
@@ -1417,18 +1428,21 @@ consistentTypesPass p (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
                     ts' <- sequence <$> mapM (consistentTypesPass p) ts
                     popScope
                     pushScope
-                    case evaluateTExprTotal pos usts (negateDeduction tExpr) t of
-                        Right ann' -> do
-                            insertAnnotation lhs $ Finalizeable False ann'
-                            mapM_ getAssumptionType es
-                            e <- sequence <$> mapM (consistentTypesPass p) es
-                            popScope
-                            let res = case (ts', e) of
-                                    (Right b, Right c) -> Right $ AnnotationLiteral "_"
-                                    (Left a, _) -> Left a
-                                    (_, Left a) -> Left a
-                            return res
-                        Left err -> return $ Left err
+                    case es of
+                        [] -> popScope $> (ts' *> Right (AnnotationLiteral "_"))
+                        _ -> 
+                            case evaluateTExprTotal pos usts (negateDeduction tExpr) t of
+                                Right ann' -> do
+                                    insertAnnotation lhs $ Finalizeable False ann'
+                                    mapM_ getAssumptionType es
+                                    e <- sequence <$> mapM (consistentTypesPass p) es
+                                    popScope
+                                    let res = case (ts', e) of
+                                            (Right b, Right c) -> Right $ AnnotationLiteral "_"
+                                            (Left a, _) -> Left a
+                                            (_, Left a) -> Left a
+                                    return res
+                                Left err -> return $ Left err
 consistentTypesPass p (IfStmnt cond ts es pos) = do
     (_, (_, mp)) <- get
     c <- consistentTypesPass p cond
