@@ -121,7 +121,21 @@ while being typed as
 ```
 pair: Pair(Int, Pair({}, String))
 ```
-When unions are put inside named types like
+For a recursive type, when you want to generalize over its length, you can simply specify all the type variables in order like `len` function below does.
+```
+len(xs: Nil | Ls(n{})) => Int {
+    if xs is Nil { return 0 }
+    return len(xs.res)+1
+}
+
+let xs = Ls("d", Ls("ddjn", Ls("ddjn", {})))
+println(len(xs))
+```
+Here `xs` would be typed as
+```
+xs: Ls(String, Ls(String, ({} | Ls(String))))
+```
+but will be generalized to `Ls(String)` when sending to a function, this generalization presists if it's returned from a function that generalizes it. When unions are put inside named types like
 ```
 newtype Tup(a{}, b{}) = (a, b)
 let t = Tup(1, "Hello")
