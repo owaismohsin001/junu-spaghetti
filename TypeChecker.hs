@@ -42,7 +42,7 @@ modifyAnnotation usts k@(LhsIdentifer _ pos) ann (Annotations anns rest) =
         Just (Finalizeable True v) -> 
             case sameTypesNoUnionSpec pos usts ann v of
                 Right _ -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns) rest
-                Left err -> Left $ "Can not reconcile annotated" ++ show ann ++ " with " ++ show v
+                Left err -> Left $ "Can not reconcile annotated " ++ show ann ++ " with " ++ show v ++ "\n" ++ showPos pos
         Nothing -> 
             case rest of
                 Just rs -> case modifyAnnotation usts k ann rs of
