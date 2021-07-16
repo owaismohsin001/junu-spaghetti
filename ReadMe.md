@@ -25,7 +25,7 @@ and it's typed as
 ```
 addNums: (Int, Int) -> Int
 ```
-Now, it's possible for Junu to infer the return type of functions that don't recurse, either by themselves or through mutual recursion, which this function does not so let's omit the return type and see if it works.
+Now, Junu can infer the return type of functions that don't recurse, either by themselves or through mutual recursion, which this function does not so let's omit the return type and see if it works.
 ```
 let addNums = (a: Int, b: Int) => {
     return a+b
@@ -48,7 +48,7 @@ g: (Int) -> Int
 ```
 
 ## Structural Types
-These types are compared exclusively by their structures since they literally have no name. Following is an example of such a type
+These types are compared exclusively by their structures since they have no name. Following is an example of such a type
 ```
 let obj = {a: 1, b: 3, c: "Hello"}
 ```
@@ -59,7 +59,7 @@ obj: {a: Int, b: Int, c: String}
 and any object even if aliased can be assigned to this variable
 
 ## Type Unions
-Type Unions are a form of subtyping which prefers composition over inheritance and is definitely the heart and soul of this programming language. Unions here can be explicitly annotated, like this
+Type Unions are a form of subtyping which prefers composition over inheritance and is the heart and soul of this programming language. Unions here can be explicitly annotated, like this
 ```
 let x: Int | String = 1
 x = "Hello"
@@ -73,10 +73,10 @@ both of which will be typed as
 ```
 x: (Int | String)
 ```
-You must note that a union can only be passed to a function that is either polymorphic over them or expects exactly the unions that are sent to it, this is done in order to preserve the soundness of the type system. 
+You must note that a union can only be passed to a function that is either polymorphic over them or expects exactly the unions that are sent to it, this is done to preserve the soundness of the type system. 
 
 ## Narrowing Unions
-Given a type, `Int | String`, there are ways to operate on it that can give you a singular type, and the main approach of doing that is using if statemnts, like such
+Given a type, `Int | String`, there are ways to operate on it that can give you a singular type, and the main approach of doing that is using if statements, like such
 ```
 let f = (a: Int | String) => {
     if a is Int {
@@ -87,7 +87,7 @@ let f = (a: Int | String) => {
     return {}
 }
 ```
-This, when invoked with like this `f("World")`, prints `Hello World` but when invoked like this `f(3)` prints `5`. As you might have noticed other than narrowing the type of `a` to `Int` in the frst block, it narrowed down the type of the `else` block to `String` as well. This functions just as well with early returns too, for instance the function above can be re-written as
+This, when invoked with like this `f("World")`, prints `Hello World` but when invoked like this `f(3)` prints `5`. As you might have noticed other than narrowing the type of `a` to `Int` in the first block, it narrowed down the type of the `else` block to `String` as well. This functions just as well with early returns too, for instance, the function above can be re-written as
 ```
 let f = (a: Int | String) => {
     if a is Int {
@@ -98,10 +98,10 @@ let f = (a: Int | String) => {
     return {}
 }
 ```
-and be typed just as well.
+and be typed just as well. There also exist other operators such as the infix operator `notis` which is the opposite of `is`, and the unary `not` operator which negates an expression.
 
 ## Named Types
-Named types allow for generic recursive structures, they are much like a pattern in Haskell but they themselves have a type. Here's the type they have. Here's an example of a named type, with the name `Pair`
+Named types allow for generic recursive structures, they are much like a pattern in Haskell but they have a type. Here's the type they have. Here's an example of a named type, with the name `Pair`
 ```
 newtype Pair(a{}, b{}) = (a, b)
 ```
@@ -135,7 +135,7 @@ Here `xs` would be typed as
 ```
 xs: Ls(String, Ls(String, ({} | Ls(String))))
 ```
-but will be generalized to `Ls(String)` when sending to a function, this generalization presists if it's returned from a function that generalizes it. When unions are put inside named types like
+but will be generalized to `Ls(String)` when sending to a function, this generalization persists if it's returned from a function that generalizes it. When unions are put inside named types like
 ```
 newtype Tup(a{}, b{}) = (a, b)
 let t = Tup(1, "Hello")
@@ -184,7 +184,7 @@ Here, this is typed simply as
 ```
 identity: (x{}) -> x{}
 ```
-where `x{}` can literally any type, and a value of the same type will be returned because it's inferred as `(x{}) -> x{}`. The empty curly braces denote that there are no constraints on what this type can be. Here are a few examples of its invocations.
+where `x{}` can literally be any type, and a value of the same type will be returned because it's inferred as `(x{}) -> x{}`. The empty curly braces denote that there are no constraints on what this type can be. Here are a few examples of its invocations.
 ```
 let n = identity(1)
 let s = identity("Hello")
@@ -214,6 +214,27 @@ let idName = (obj: x{.name: String}) => obj
 ```
 when invoked like such `let resB = idName({name: "John", age: 20})` would be typed as `{age: Int, name: String}`.
 Note: Row polymorphism along is planned although it's not yet implemented.
+
+## Arrays
+Arrays in Junu are encoded entirely in its type system with the only aid coming from the language at runtime. This demonstrates the power of the system's union types quite effectively. You may initialize an array by either using the `Array` constructor or by using `insert` on an empty object. Here's an example of how type-safe heterogeneous arrays can be used in this language.
+```
+let insert = (arr: Nil | Array(m{}), a: n{}) => concat(arr, Array(a))
+let res = insert(insert(insert({}, 1), true), "mooo")
+res = concat(res, Array({p: true}))
+```
+An empty array can is to be represented as type `Nil`. This array can be indexed with the `index` function and it should return a type that's the union of all types present in the array. The union can then be narrowed with if statements. Following is an example of how this can be used 
+```
+if res notis Nil {
+    let x = index(res, 3)
+    if x is String {
+        println(x + "hoo")
+    } else if x is Int {
+        println(x+1)
+    } else {
+        println(x)
+    }
+}
+```
 
 ## Open functions
 Open functions are the ad-hoc polymorphism of Junu. Open functions have many instantiations but those instantiations have to conform to the interface set by open functions, and can only be invoked with types that they are already instantiated with. Here's an example
