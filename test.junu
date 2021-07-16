@@ -142,6 +142,10 @@ impl fst(s: Tup(a{}, b{})) => {
     return identity(s.a)
 } for Tup(a{}, b{})
 
+impl add(a: Pet, b: Pet) => {
+    return {species: if a.species == b.species then a.species else a.species + " with " + b.species, name: a.name + " " + b.name, color: b.color}
+} for Pet
+
 let snd = (s: Tup(l{}, r{})) => fst(swapML(s))
 let tres = snd(s)
 
@@ -177,3 +181,7 @@ if x is Int {
 let basicPerson = (name: String, age: Int, male: Bool) => {
     return {name: name, age: age, male: male, pet: {species: "Cat", name: "Tom", color: "White"}, parent: {}}
 }
+
+let petPlusPet = st.pet + {species: "Dog", name: "Tom", color: "Black"}
+write("petPlusPet is: ")
+println(petPlusPet)

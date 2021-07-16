@@ -117,19 +117,52 @@ function IsType(val, spec)
     return false
 end
 
-eq = function(a, b) return a==b end
-neq = function(a, b) return a~=b end
-gt = function(a, b) return a>b end
-gte = function(a, b) return a>=b end
-lt = function(a, b) return a<b end
-lte = function(a, b) return a<=b end
-add = function(a, b) return type(a) == "string" and a .. b or a+b end
-sub = function(a, b) return a-b end
-mul = function(a, b) return a*b end
-div = function(a, b) return a/b end
-mod = function(a, b) return math.mod(a, b) end
-anded = function(a, b) return a and b end
-ored = function(a, b) return a or b end
+function newOpenFunction() 
+    local t = {}
+    function f(t, ...)
+        for _, pair in pairs(t) do
+            pred, fn = unpack(pair)
+            if pred(...) then return fn(...) end
+        end
+        return nil
+    end
+    setmetatable(t, {__call = f})
+    return t
+end
+
+function newOpenInstance(fTable, pred, body)
+    table.insert(fTable, {pred, body})
+end
+
+eq = newOpenFunction()
+newOpenInstance(eq, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a==b end)
+newOpenInstance(eq, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a==b end)
+neq = newOpenFunction()
+newOpenInstance(neq, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a~=b end)
+newOpenInstance(neq, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a~=b end)
+gt = newOpenFunction()
+newOpenInstance(gt, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a>b end)
+gte = newOpenFunction()
+newOpenInstance(gte, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a>=b end)
+lt = newOpenFunction()
+newOpenInstance(lt, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a<b end)
+lte = newOpenFunction()
+newOpenInstance(lte, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a<=b end)
+add = newOpenFunction()
+newOpenInstance(add, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a+b end)
+newOpenInstance(add, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a..b end)
+sub = newOpenFunction()
+newOpenInstance(sub, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a-b end)
+mul = newOpenFunction()
+newOpenInstance(mul, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a*b end)
+div = newOpenFunction()
+newOpenInstance(div, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a/b end)
+mod = newOpenFunction()
+newOpenInstance(mod, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return math.mod(a, b) end)
+anded = newOpenFunction()
+newOpenInstance(anded, function(a, b) return IsType(a, IsBool) and IsType(b, IsBool) end, function(a, b) return a and b end)
+ored = newOpenFunction()
+newOpenInstance(ored, function(a, b) return IsType(a, IsBool) and IsType(b, IsBool) end, function(a, b) return a or b end)
 
 getWrappedArray = function(a)
     local axx = a.a
@@ -201,23 +234,6 @@ function duplicate(obj, seen)
     s[obj] = res
     for k, v in pairs(obj) do res[duplicate(k, s)] = duplicate(v, s) end
     return res
-end
-
-function newOpenFunction() 
-    local t = {}
-    function f(t, ...)
-        for _, pair in pairs(t) do
-            pred, fn = unpack(pair)
-            if pred(...) then return fn(...) end
-        end
-        print("oidoid")
-        return nil
-    end
-    setmetatable(t, {__call = f})
-    return t
-end
-function newOpenInstance(fTable, pred, body)
-    table.insert(fTable, {pred, body})
 end
 
 println = function(a)
