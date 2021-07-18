@@ -73,7 +73,7 @@ both of which will be typed as
 ```
 x: (Int | String)
 ```
-You must note that a union can only be passed to a function that is either polymorphic over them or expects exactly the unions that are sent to it, this is done to preserve the soundness of the type system. 
+You must note that a union can only be passed to a function that is either polymorphic over them or expects the exact the unions that are sent to it, this is done to preserve the soundness of the type system. 
 
 ## Narrowing Unions
 Given a type, `Int | String`, there are ways to operate on it that can give you a singular type, and the main approach of doing that is using if statements, like such
@@ -141,7 +141,7 @@ newtype Tup(a{}, b{}) = (a, b)
 let t = Tup(1, "Hello")
 t = Tup(1, 1)
 ```
-their inner variables are turned into unions if possible
+their inner variables are turned into unions if that's a possiblility
 ```
 Tup = Tup(a{}, b{}) = fromList [(a,a{}),(b,b{})]
 t: Tup(Int, (Int | String))
