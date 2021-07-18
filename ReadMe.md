@@ -257,3 +257,17 @@ Now, this open function can only be called with either `{pet: {name: Int}}` or `
 ```
 setName("Junu", "Collatz", {pet: {name: 1}})
 ```
+It's also important to know that +, -, and other operators are actually overloadable because they are implemented as open functions but since user-defined operators are not yet part of the language, it only makes sense that these are to be implemented by using names, and that's why logical names are assigned to these. For instance `add`, `sub`, `neq`, and `eq` are names for `+`, `-`, `!=`, and `==` respectively. Here's an example of how you can implement add for your own type that represents a 2d point.
+```
+type Point = {x: Int, y: Int}
+
+impl add(a: Point, b: Point) => {
+    return {x: a.x + b.x, y: a.y + b.y}
+} for Point
+
+println({x: 1, y: 3} + {x: 2, y: 7})
+```
+and this, as you'd expect would output
+```
+{x: 3, y: 10, }
+```
