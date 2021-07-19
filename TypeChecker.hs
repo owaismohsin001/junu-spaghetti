@@ -842,7 +842,7 @@ getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft po
                                         beq = Set.fromList $ Map.keys $ Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) base
                                     in
                                     if Set.size aeq >= Set.size beq then 
-                                        Right <$> insertAnnotation lhs (Finalizeable True (OpenFunctionAnnotation anns ret' ft $ implft:impls))
+                                        modifyAnnotationState lhs (OpenFunctionAnnotation anns ret' ft $ implft:impls)
                                     else return . Left $ "Forbidden to specify specified type variables\n" ++ showPos pos
                 Left err -> return $ Left err
         Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
@@ -867,7 +867,7 @@ getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
                                         b = Set.fromList $ Map.keys $ Map.filterWithKey (\a b -> isGenericAnnotation a && not (sameTypesBool pos mp a b)) base
                                     in
                                     if Set.size a >= Set.size b then 
-                                        Right <$> insertAnnotation lhs (Finalizeable True (OpenFunctionAnnotation anns ret' ft $ implft:impls))
+                                        modifyAnnotationState lhs (OpenFunctionAnnotation anns ret' ft $ implft:impls)
                                     else return . Left $ "Forbidden to specify specified type variables\n" ++ showPos pos
                 Left err -> return $ Left err
         Right a -> return . Left $ "Cannot extend function " ++ show a ++ "\n" ++ showPos pos
