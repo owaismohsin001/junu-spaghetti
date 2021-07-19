@@ -491,12 +491,12 @@ specifyInternal pos f defs a@(GenericAnnotation id1 cns1) b@(GenericAnnotation i
         Left err -> return $ Left err
         ) . sequence =<< mapM (applyConstraintState pos f defs b) cns1
 specifyInternal pos f defs a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
-        Right _ -> do
-            a <- addTypeVariable pos f defs a b
-            case a of
-                Right _ -> return $ Right b
-                Left err -> return $ Left err
-        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos f defs b) cns
+    Right _ -> do
+        a <- addTypeVariable pos f defs a b
+        case a of
+            Right _ -> return $ Right b
+            Left err -> return $ Left err
+    Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos f defs b) cns
 specifyInternal pos f defs a@(StructAnnotation ms1) b@(StructAnnotation ms2)
     | Map.size ms1 /= Map.size ms2 = return . Left $ unmatchedType a b pos
     | Map.null ms1 && Map.null ms2 = return $ Right b
@@ -517,7 +517,7 @@ specifyInternal pos f defs a@(FunctionAnnotation oargs oret) b@(FunctionAnnotati
         ) . sequence =<< zipWithM (specifyInternal pos f defs) (oargs ++ [oret]) (args ++ [ret])
 specifyInternal pos f defs a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = return . Left $ unmatchedType a b pos
-    | otherwise = specifyInternal pos f defs (NewTypeInstanceAnnotation id1 anns1) b
+    | otherwise = getTypeMap >>= \mp -> specifyInternal pos mergedTypeConcreteEither defs (NewTypeInstanceAnnotation id1 anns1) b
 specifyInternal pos f defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
     | otherwise  = do
@@ -1074,6 +1074,7 @@ unionFrom a b x =
         Left err -> createUnion a b
 
 mergedTypeConcrete = mergedType (True, False, Map.empty) comparisionEither
+mergedTypeConcreteEither pos mp a b = Right $ mergedTypeConcrete pos mp a b
 
 mergedType :: (Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
 mergedType _ crt pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 

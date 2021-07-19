@@ -1,6 +1,6 @@
-newtype Ls(x{}, Nil | Ls(x{})) = (r, res)
+newtype Ls(x{}, Nil | Ls(x{} | y{})) = (r, res)
 
-let base = () => {return {}}
+let base = () => return {}
 let insert = (arr: Nil | Array(m{}), a: n{}) => concat(arr, Array(a))
 
 let res = Array(1)
@@ -18,11 +18,11 @@ len(xs: Nil | Ls(n{})) => Int {
     return len(xs.res)+1
 }
 
-let ins = (a: a{}, ls: Nil | Ls(b{})) => Ls(a, ls)
+let ins = (a: a{}, ls: Nil | Ls(b{})) => Nil | Ls(a{} | b{}) {return Ls(a, ls)}
 
-let xs = Ls("d", ins("ddjn", Ls("ddjn", {})))
+let xs = ins(true, ins(1, Ls("ddjn", {})))
 xs = ins("ok", xs)
-xs = ins("bad", xs)
+xs = ins({x: 8}, xs)
 println(len(xs))
 
 if res notis Nil {
