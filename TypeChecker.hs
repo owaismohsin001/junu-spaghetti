@@ -299,13 +299,13 @@ reshuffleTypes pos defs = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (cha
 
 sameTypesNoUnionSpec = sameTypesGeneric (False, True, Map.empty)
 
-addTypeVariableGeneralized pos defs stmnt k v = do
+addTypeVariableGeneralized pos f defs stmnt k v = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup k mp of
         Nothing -> addToMap a rs mp usts k v
         Just a -> do
-            case sameTypesNoUnionSpec pos usts a v of
-                Right a -> addToMap a rs mp usts k v
+            case f pos usts a v of
+                Right v -> addToMap a rs mp usts k v
                 Left err -> lastResort a rs mp usts (Left err)
     where
         addToMap a rs mp usts k v = do
@@ -319,11 +319,11 @@ addTypeVariableGeneralized pos defs stmnt k v = do
                 Just st -> if Set.member v st then addToMap a rs mp usts k v else return x
                 Nothing -> return x
 
-addTypeVariable :: SourcePos -> Set.Set Annotation -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
-addTypeVariable pos defs = addTypeVariableGeneralized pos defs (updateRelations pos defs)
+addTypeVariable :: SourcePos -> (SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation) -> Set.Set Annotation -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
+addTypeVariable pos f defs = addTypeVariableGeneralized pos f defs (updateRelations pos f defs)
 
 -- This is written horribly, rewrite it
-updateSingleRelation pos defs r = do
+updateSingleRelation pos fa defs r = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup r rs of
         Just rl -> do
@@ -339,7 +339,7 @@ updateSingleRelation pos defs r = do
             mls' = case fnv of 
                 Just a -> map (\(k, _) -> (k, a)) mls
                 Nothing -> []
-            f = addTypeVariableGeneralized pos defs (return $ Right ())
+            f = addTypeVariableGeneralized pos fa defs (return $ Right ())
 
             firstNonUnderscore [] = Nothing 
             firstNonUnderscore ((_, AnnotationLiteral "_"):xs) = firstNonUnderscore xs
@@ -348,73 +348,87 @@ updateSingleRelation pos defs r = do
             getAllRelationsInvolving r rs = Set.unions $ Map.elems $ Map.filter (Set.member r) $ Map.mapWithKey Set.insert rs
         Nothing -> return . Left $ "No relation on " ++ show r ++ " has been established"
 
-updateRelations :: P.SourcePos -> Set.Set Annotation -> SubstituteState (Either String ())
-updateRelations pos defs = do
+updateRelations :: P.SourcePos -> (P.SourcePos
+    -> UserDefinedTypes
+    -> Annotation
+    -> Annotation
+    -> Either [Char] Annotation) -> Set.Set Annotation -> SubstituteState (Either String ())
+updateRelations pos f defs = do
     (a, ((rs, mp), usts)) <- get
-    x <- mapM (updateSingleRelation pos defs) $ Map.keys rs
+    x <- mapM (updateSingleRelation pos f defs) $ Map.keys rs
     case sequence x of
         Right _ -> return $ Right ()
         Left err -> return $ Left err
 
-addRelation :: P.SourcePos -> Set.Set Annotation -> Annotation -> Annotation -> SubstituteState (Either String ())
-addRelation pos defs r nv = do
+-- addRelation :: P.SourcePos -> Set.Set Annotation -> Annotation -> Annotation -> SubstituteState (Either String ())
+addRelation :: SourcePos
+    -> (SourcePos
+        -> UserDefinedTypes
+        -> Annotation
+        -> Annotation
+        -> Either [Char] Annotation)
+        -> Set.Set Annotation
+        -> Annotation
+        -> Annotation
+        -> SubstituteState (Either a ())
+addRelation pos f defs r nv = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup r rs of
         Just rl -> do
             let nrs = Map.insert r (rl `Set.union` Set.singleton nv) rs
             put (a, ((nrs, mp), usts))
-            Right () <$ updateSingleRelation pos defs r
+            Right () <$ updateSingleRelation pos f defs r
         Nothing -> do
             let nrs = Map.insert r (Set.singleton nv) rs
             put (a, ((nrs, mp), usts))
-            Right () <$ updateSingleRelation pos defs r
+            Right () <$ updateSingleRelation pos f defs r
 
-applyConstraintState :: SourcePos -> Set.Set Annotation -> Annotation -> Constraint -> SubstituteState (Either String Annotation)
-applyConstraintState pos defs ann (ConstraintHas lhs cn) = 
+applyConstraintState :: SourcePos -> (SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either [Char] Annotation) -> Set.Set Annotation -> Annotation -> Constraint -> SubstituteState (Either String Annotation)
+applyConstraintState pos f defs ann (ConstraintHas lhs cn) = 
     do 
         mp <- getTypeMap
         case ann of
             StructAnnotation mp -> 
                 case lhs `Map.lookup` mp of
-                    Just ann -> applyConstraintState pos defs ann cn
+                    Just ann -> applyConstraintState pos f defs ann cn
                     Nothing -> return . Left $ "No field named " ++ show lhs ++ " found in " ++ show ann ++ "\n" ++ showPos pos
             Annotation id ->
                 case LhsIdentifer id pos `Map.lookup` mp of
-                    Just ann -> applyConstraintState pos defs ann cn
+                    Just ann -> applyConstraintState pos f defs ann cn
                     Nothing -> return . Left $ "No type named " ++ id ++ " found\n" ++ showPos pos
             NewTypeInstanceAnnotation id args -> 
                         accessNewType args
                         (\(NewTypeAnnotation _ _ ps) -> 
                             case Map.lookup lhs ps of
-                                Just ann -> applyConstraintState pos defs ann cn
+                                Just ann -> applyConstraintState pos f defs ann cn
                                 Nothing -> return . Left $ "Could not find " ++ show lhs ++ " in " ++ show ps ++ "\n" ++ showPos pos
                             ) 
                         (LhsIdentifer id pos)
             g@(GenericAnnotation id cns) -> case genericHas pos g lhs cns of
-                Right ann -> applyConstraintState pos defs ann cn
+                Right ann -> applyConstraintState pos f defs ann cn
                 Left err -> return $ Left err
             g@(RigidAnnotation id cns) -> case genericHas pos g lhs cns of
-                Right ann -> applyConstraintState pos defs ann cn
+                Right ann -> applyConstraintState pos f defs ann cn
                 Left err -> return $ Left err
-            t@TypeUnion{} -> typeUnionHas pos defs t cn >>= \case
-                Right ann -> applyConstraintState pos defs ann cn
+            t@TypeUnion{} -> typeUnionHas pos f defs t cn >>= \case
+                Right ann -> applyConstraintState pos f defs ann cn
                 Left err -> return $ Left err
             a -> return . Left $ "Can't search for field " ++ show lhs ++ " in " ++ show a ++ "\n" ++ showPos pos
-applyConstraintState pos defs ann2 (AnnotationConstraint ann1) = do
-    a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos defs ann2 ann1 *> addRelation pos defs ann1 ann2 $> Right ann1 else addTypeVariable pos defs ann1 ann2
+applyConstraintState pos f defs ann2 (AnnotationConstraint ann1) = do
+    a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos f defs ann2 ann1 *> addRelation pos f defs ann1 ann2 $> Right ann1 else addTypeVariable pos f defs ann1 ann2
     case a of
-        Right _ -> specifyInternal pos defs ann1 ann2
+        Right _ -> specifyInternal pos f defs ann1 ann2
         Left err -> return $ Left err
 
-typeUnionHas pos defs (TypeUnion st) cn = (\case
+typeUnionHas pos f defs (TypeUnion st) cn = (\case
                 Left err -> return $ Left err
                 Right stl -> do
-                    a <- sequence <$> mapM (flip (applyConstraintState pos defs) cn) stl
+                    a <- sequence <$> mapM (flip (applyConstraintState pos f defs) cn) stl
                     case a of
                         Right (x:_) -> return $ Right x
                         Left err -> return $ Left err
-                ) . sequence =<< mapM (flip (applyConstraintState pos defs) cn) stl where stl = Set.toList st
-typeUnionHas _ _ t _ = error $ "typeUnionHas can only be called with type union, not " ++ show t
+                ) . sequence =<< mapM (flip (applyConstraintState pos f defs) cn) stl where stl = Set.toList st
+typeUnionHas _ _ _ t _ = error $ "typeUnionHas can only be called with type union, not " ++ show t
 
 isValidNewTypeInstance = undefined
 
@@ -435,89 +449,90 @@ isGeneralizedInstanceFree pos ann@(NewTypeInstanceAnnotation id1 anns1) mp =
 isGeneralizedInstanceFree a b c = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ ", " ++ show c ++ "]"
 
 specifyInternal :: SourcePos
+    -> (SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either [Char] Annotation)
     -> Set.Set Annotation
     -> Annotation
     -> Annotation
     -> SubstituteState (Either String Annotation)
-specifyInternal pos defs a@AnnotationLiteral{} b@AnnotationLiteral{} = (\mp -> return $ sameTypes pos mp a b *> Right a) =<< gets (snd . snd)
-specifyInternal pos defs a@(RigidAnnotation id1 cns1) b@(RigidAnnotation id2 cns2) 
-    | id1 == id2 = (b <$) <$> (sequence <$> mapM (applyConstraintState pos defs b) cns1)
+specifyInternal pos f defs a@AnnotationLiteral{} b@AnnotationLiteral{} = (\mp -> return $ sameTypes pos mp a b *> Right a) =<< gets (snd . snd)
+specifyInternal pos f defs a@(RigidAnnotation id1 cns1) b@(RigidAnnotation id2 cns2) 
+    | id1 == id2 = (b <$) <$> (sequence <$> mapM (applyConstraintState pos f defs b) cns1)
     | otherwise = return . Left $ unmatchedType a b pos
-specifyInternal pos defs a@(GenericAnnotation id cns) b@(AnnotationLiteral ann) = do
+specifyInternal pos f defs a@(GenericAnnotation id cns) b@(AnnotationLiteral ann) = do
     mp <- getTypeMap
-    ann <- addTypeVariable pos defs a b
+    ann <- addTypeVariable pos f defs a b
     case ann of
         Right ann ->
             (\case
                 Right _ -> return $ Right b
-                Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos defs ann) cns
+                Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos f defs ann) cns
         Left err -> return $ Left err
-specifyInternal pos defs a@(GenericAnnotation id cns) b@(Annotation ann) = do
+specifyInternal pos f defs a@(GenericAnnotation id cns) b@(Annotation ann) = do
     anno <- getTypeState b pos
     case anno of
-        Right ann -> specifyInternal pos defs a ann
+        Right ann -> specifyInternal pos f defs a ann
         Left err -> return $ Left err
-specifyInternal pos defs a@(Annotation id1) b@(Annotation id2) 
+specifyInternal pos f defs a@(Annotation id1) b@(Annotation id2) 
     | id1 == id2 = return $ Right b
     | otherwise = (\mp -> case Map.lookup (LhsIdentifer id1 pos) mp of 
         Just a' -> case Map.lookup (LhsIdentifer id2 pos) mp of
-            Just b' -> specifyInternal pos defs a' b'
+            Just b' -> specifyInternal pos f defs a' b'
             Nothing -> undefined
         Nothing -> return $ Left $ noTypeFound id1 pos) =<< getTypeMap
-specifyInternal pos defs a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
-    Just a' -> specifyInternal pos defs a' b
+specifyInternal pos f defs a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
+    Just a' -> specifyInternal pos f defs a' b
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
-specifyInternal pos defs a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
-    Just b' -> specifyInternal pos defs a b'
+specifyInternal pos f defs a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
+    Just b' -> specifyInternal pos f defs a b'
     Nothing -> return $ Left $ noTypeFound id pos) =<< getTypeMap
-specifyInternal pos defs a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = do
+specifyInternal pos f defs a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = do
     (\case
-        Right _ -> addRelation pos defs b a *> addRelation pos defs a b $> Right b
+        Right _ -> addRelation pos f defs b a *> addRelation pos f defs a b $> Right b
         Left err -> return $ Left err
-        ) . sequence =<< mapM (applyConstraintState pos defs b) cns1
-specifyInternal pos defs a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
+        ) . sequence =<< mapM (applyConstraintState pos f defs b) cns1
+specifyInternal pos f defs a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
         Right _ -> do
-            a <- addTypeVariable pos defs a b
+            a <- addTypeVariable pos f defs a b
             case a of
                 Right _ -> return $ Right b
                 Left err -> return $ Left err
-        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos defs b) cns
-specifyInternal pos defs a@(StructAnnotation ms1) b@(StructAnnotation ms2)
+        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos f defs b) cns
+specifyInternal pos f defs a@(StructAnnotation ms1) b@(StructAnnotation ms2)
     | Map.size ms1 /= Map.size ms2 = return . Left $ unmatchedType a b pos
     | Map.null ms1 && Map.null ms2 = return $ Right b
     | Set.fromList (Map.keys ms1) == Set.fromList (Map.keys ms2) = (\case
         Right _ -> return $ Right b
-        Left err -> return $ Left err) . sequence =<< zipWithM (specifyInternal pos defs) (Map.elems ms1) (Map.elems ms2)
-specifyInternal pos defs a@(OpenFunctionAnnotation oargs oret _ _) b@(FunctionAnnotation args ret) 
+        Left err -> return $ Left err) . sequence =<< zipWithM (specifyInternal pos f defs) (Map.elems ms1) (Map.elems ms2)
+specifyInternal pos f defs a@(OpenFunctionAnnotation oargs oret _ _) b@(FunctionAnnotation args ret) 
     | length args /= length oargs = return $ callError oargs args
     | otherwise = (\case
         Right _ -> return $ Right b
         Left err -> return $ Left err
-        ) . sequence =<< zipWithM (specifyInternal pos defs) (oargs ++ [oret]) (args ++ [ret])
-specifyInternal pos defs a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation args ret)
+        ) . sequence =<< zipWithM (specifyInternal pos f defs) (oargs ++ [oret]) (args ++ [ret])
+specifyInternal pos f defs a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation args ret)
     | length args /= length oargs = return $ callError oargs args
     | otherwise = (\case
         Right _ -> return $ Right b
         Left err -> return $ Left err
-        ) . sequence =<< zipWithM (specifyInternal pos defs) (oargs ++ [oret]) (args ++ [ret])
-specifyInternal pos defs a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+        ) . sequence =<< zipWithM (specifyInternal pos f defs) (oargs ++ [oret]) (args ++ [ret])
+specifyInternal pos f defs a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = return . Left $ unmatchedType a b pos
-    | otherwise = specifyInternal pos defs (NewTypeInstanceAnnotation id1 anns1) b
-specifyInternal pos defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2) 
+    | otherwise = specifyInternal pos f defs (NewTypeInstanceAnnotation id1 anns1) b
+specifyInternal pos f defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
     | otherwise  = do
         pred <- isGeneralizedInstance pos a
         if pred then do
             x <- fullAnotationFromInstance pos a
             case x of
-                Right ntp@(NewTypeAnnotation id anns mp) -> specifyInternal pos defs ntp b
+                Right ntp@(NewTypeAnnotation id anns mp) -> specifyInternal pos f defs ntp b
                 Right _ -> return . Left $ noTypeFound id1 pos
                 Left err -> return $ Left err
         else (\case
                 Right _ -> return $ Right b
                 Left err -> return $ Left err
-                ) . sequence =<< zipWithM (specifyInternal pos defs) anns1 anns2
-specifyInternal pos defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
+                ) . sequence =<< zipWithM (specifyInternal pos f defs) anns1 anns2
+specifyInternal pos fa defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
     mp <- getTypeMap
     case (foldr1 (mergedTypeConcrete pos mp) _as, foldr1 (mergedTypeConcrete pos mp) _bs) of
         (TypeUnion as, TypeUnion bs) -> do
@@ -532,51 +547,57 @@ specifyInternal pos defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
                             if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then 
                                 return $ Left err 
                             else distinctUnion mp err (Set.toList $ collectGenenrics mp a)
-        (a, b) -> specifyInternal pos defs a b
+        (a, b) -> specifyInternal pos fa defs a b
     where
-        f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos defs x v1) ps2
+        f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos fa defs x v1) ps2
         typeUnionList (TypeUnion xs) action = action $ Set.toList xs
-        typeUnionList a action = specifyInternal pos defs a b
-        g mp ps2 v1 = map (\x -> (specifyInternal pos defs x v1, x)) ps2
+        typeUnionList a action = specifyInternal pos fa defs a b
+        g mp ps2 v1 = map (\x -> (specifyInternal pos fa defs x v1, x)) ps2
         isRightLifted s = isRight <$> s
         distinctUnion _ err [] = return $ Left err
         distinctUnion mp _ xs = do
             let as' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _as)
             let bs' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _bs)
             usts <- getTypeMap
-            c1 <- specifyInternal pos defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) as')
-            c2 <- sequence <$> zipWithM (flip (specifyInternal pos defs)) (tail xs) (drop (length xs) as')
+            c1 <- specifyInternal pos fa defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) as')
+            c2 <- sequence <$> zipWithM (flip (specifyInternal pos fa defs)) (tail xs) (drop (length xs) as')
             case (c1, c2) of
                 (Right _, Right _) -> return $ Right $ mergedTypeConcrete pos usts b b
                 (Left err, _) -> return $ Left err
                 (_, Left err) -> return $ Left err
-specifyInternal pos defs a b@(TypeUnion st) = do
-    x <- sequence <$> mapM (flip (specifyInternal pos defs) a) stl
+specifyInternal pos f defs a b@(TypeUnion st) = do
+    x <- sequence <$> mapM (flip (specifyInternal pos f defs) a) stl
     case x of
         Right a -> return . Right $ head a
         Left err -> return $ Left err
     where stl = Set.toList st
-specifyInternal pos defs a@(TypeUnion st) b = getFirst a b pos $ map (flip (specifyInternal pos defs) b) $ Set.toList st
-specifyInternal pos defs a@(GenericAnnotation id cns) b = 
+specifyInternal pos f defs a@(TypeUnion st) b = getFirst a b pos $ map (flip (specifyInternal pos f defs) b) $ Set.toList st
+specifyInternal pos f defs a@(GenericAnnotation id cns) b = 
     (\case
         Right _ -> do
-            a <- addTypeVariable pos defs a b
+            a <- addTypeVariable pos f defs a b
             case a of
                 Right _ -> return $ Right b
                 Left err -> return $ Left err
-        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos defs b) cns
-specifyInternal pos defs a b = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
+        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos f defs b) cns
+specifyInternal pos f defs a b = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
 
 getFirst a b pos [] = return . Left $ unmatchedType a b pos
 getFirst a b pos (x:xs) = x >>= \case
     Right a -> return $ Right a
     Left _ -> getFirst a b pos xs
 
-specify :: SourcePos -> Set.Set Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Either String (Annotation, TypeRelations)
-specify pos defs base mp a b = (,rel) <$> ann where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos defs a b) (a, ((Map.empty, base), mp))
+basicSpecifyFunction :: SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
+basicSpecifyFunction pos usts a b = sameTypesNoUnionSpec pos usts a b $> b
+
+-- specify :: SourcePos -> Set.Set Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Either String (Annotation, TypeRelations)
+specifyGeneralized pos f defs base mp a b = (,rel) <$> ann where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos f defs a b) (a, ((Map.empty, base), mp))
+
+specify :: SourcePos -> Set.Set Annotation -> Map.Map Annotation Annotation -> Map.Map Lhs Annotation -> Annotation -> Annotation -> Either String (Annotation, TypeRelations)
+specify pos = specifyGeneralized pos basicSpecifyFunction
 
 getPartialSpecificationRules :: SourcePos -> Set.Set Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> (Map.Map Annotation Annotation, TypeRelations)
-getPartialSpecificationRules pos defs base mp a b = (nmp, rel) where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos defs a b) (a, ((Map.empty, base), mp))
+getPartialSpecificationRules pos defs base mp a b = (nmp, rel) where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos basicSpecifyFunction defs a b) (a, ((Map.empty, base), mp))
 
 getPartialNoUnderScoreSpecificationRules :: SourcePos -> Set.Set Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> (Map.Map Annotation Annotation, TypeRelations)
 getPartialNoUnderScoreSpecificationRules pos defs base mp a b = 
@@ -586,8 +607,7 @@ getSpecificationRules :: SourcePos -> Set.Set Annotation -> Map.Map Annotation A
 getSpecificationRules pos defs base mp a b = case fst st of
     Right _ -> Right (snd $ fst $ snd $ snd st)
     Left err -> Left err 
-    where st = runState (specifyInternal pos defs a b) (a, ((Map.empty, base), mp))
-
+    where st = runState (specifyInternal pos basicSpecifyFunction defs a b) (a, ((Map.empty, base), mp))
 
 sameTypesGenericBool gs crt pos mp a b = case sameTypesGeneric gs pos mp a b of
     Right _ -> True

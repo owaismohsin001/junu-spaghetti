@@ -22,6 +22,7 @@ let ins = (a: a{}, ls: Nil | Ls(b{})) => Ls(a, ls)
 
 let xs = Ls("d", ins("ddjn", Ls("ddjn", {})))
 xs = ins("ok", xs)
+xs = ins("bad", xs)
 println(len(xs))
 
 if res notis Nil {
