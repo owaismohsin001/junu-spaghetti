@@ -136,11 +136,11 @@ println(mlres)
 
 let identity = (a: x{}) => { return a }
 
-open fst(s{.a: a{}, .b: b{}}) => a{} for s{.a: a{}, .b: b{}}
+open fst(s{.a: ay{}, .b: by{}}) => ay{} for s{.a: ay{}, .b: by{}}
 
-impl fst(s: Tup(a{}, b{})) => {
+impl fst(s: Tup(w{}, d{})) => {
     return identity(s.a)
-} for Tup(a{}, b{})
+} for Tup(w{}, d{})
 
 impl add(a: Pet, b: Pet) => {
     return {species: if a.species == b.species then a.species else a.species + " with " + b.species, name: a.name + " " + b.name, color: b.color}
