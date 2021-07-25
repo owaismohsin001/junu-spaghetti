@@ -519,7 +519,7 @@ specifyInternal pos f defs a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceA
     | id1 /= id2 = return . Left $ unmatchedType a b pos
     | otherwise = do
         (_, ((_, mp), usts)) <- get
-        specifyInternal pos (\k -> if k `Map.member` mp then sameTypesNoUnionSpec else mergedTypeConcreteEither) defs (NewTypeInstanceAnnotation id1 anns1) b
+        specifyInternal pos (\k -> if k `Map.member` mp then f k else mergedTypeConcreteEither) defs (NewTypeInstanceAnnotation id1 anns1) b
         where 
             fx rels = do
                 mapM_ sequence_ <$> sequence (Map.map sequence <$> Map.mapWithKey (\k v -> map (\a -> 
@@ -839,12 +839,13 @@ getAssumptionType (CreateNewType lhs args pos) = do
     mp <- getTypeMap
     argsn <- sequence <$> mapM getAssumptionType args
     case argsn of
-        Right as -> return $ case Map.lookup lhs mp of
-            Just (NewTypeAnnotation id anns _) -> 
-                if length anns == length args then NewTypeInstanceAnnotation id <$> argsn
-                else Left $ "Can't match arguments " ++ show as ++ " with " ++ show anns
-            Just a -> error (show a)
-            Nothing -> Left $ noTypeFound (show lhs) pos
+        Right as -> case Map.lookup lhs mp of
+            Just ntp@(NewTypeAnnotation id anns _) -> 
+                case join $ specify pos <$> Right (Set.unions $ map (collectGenenrics mp) as) <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
+                    Right as -> return $ NewTypeInstanceAnnotation id <$> argsn
+                    Left err -> return $ Left err
+            Just a -> return $ Left $ show a ++ " is not an instantiable type" ++ showPos pos
+            Nothing -> return $ Left $ noTypeFound (show lhs) pos
         Left err -> return $ Left err
 getAssumptionType (DeclN (OpenFunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs (Finalizeable False ann)
 getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft pos)) = do
@@ -1446,12 +1447,13 @@ consistentTypesPass p (CreateNewType lhs@(LhsIdentifer id _) args pos) = do
     mp <- getTypeMap
     argsn <- sequence <$> mapM (consistentTypesPass p) args
     case argsn of
-        Right as -> return $ case Map.lookup lhs mp of
-            Just (NewTypeAnnotation id anns _) -> 
-                if length anns == length args then NewTypeInstanceAnnotation id <$> argsn
-                else Left $ "Can't match arguments " ++ show as ++ " with " ++ show anns ++ "\n" ++ showPos pos
-            Just a -> Left $ show a ++ " is not an instantiable type" ++ showPos pos
-            Nothing -> Left $ noTypeFound id pos
+        Right as -> case Map.lookup lhs mp of
+            Just ntp@(NewTypeAnnotation id anns _) -> 
+                case specify pos <$> Right (Set.unions $ map (collectGenenrics mp) as) <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
+                    Right _ -> return $ NewTypeInstanceAnnotation id <$> argsn
+                    Left err -> return $ Left err
+            Just a -> return $ Left $ show a ++ " is not an instantiable type" ++ showPos pos
+            Nothing -> return $ Left $ noTypeFound id pos
         Left err -> return $ Left err
 consistentTypesPass p (DeclN (Expr n)) = consistentTypesPass p n
 consistentTypesPass p (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
