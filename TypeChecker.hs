@@ -1218,10 +1218,7 @@ sameTypesGenericCrt tgs@(considerUnions, _, _) crt pos mp a@(TypeUnion st) b
     | considerUnions =
         fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGenericCrt tgs crt pos mp x b) $ Set.toList st
     | otherwise = Left $ unmatchedType a b pos
-sameTypesGenericCrt tgs@(considerUnions, _, _) crt pos mp b a@(TypeUnion st) 
-    | considerUnions =
-        fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGenericCrt tgs crt pos mp x b) $ Set.toList st
-    | otherwise = Left $ unmatchedType a b pos
+sameTypesGenericCrt tgs@(considerUnions, _, _) crt pos mp b a@(TypeUnion st) = Left $ unmatchedType a b pos
 sameTypesGenericCrt gs crt pos mp (Annotation id1) b@(Annotation id2)
     | id1 == id2 = success crt b
     | otherwise = case Map.lookup (LhsIdentifer id1 pos) mp of
