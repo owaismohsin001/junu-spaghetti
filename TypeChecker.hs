@@ -1186,9 +1186,9 @@ sameTypesGenericCrt gs crt pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnno
     if length as == length bs then (\xs -> FunctionAnnotation (init xs) (last xs)) <$> ls
     else failout crt a b pos
     where ls = zipWithM (sameTypesGenericCrt gs crt pos mp) (as ++ [ret1]) (bs ++ [ret2])
-sameTypesGenericCrt gs crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+sameTypesGenericCrt (_, gs, cns) crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = Left $ unmatchedType a b pos
-    | otherwise = sameTypesGenericCrt gs crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
+    | otherwise = sameTypesGenericCrt (True, gs, cns) crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
 sameTypesGenericCrt gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
     | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 <$> ls
     | e1 == e2 && length as1 < length as2 = flip (sameTypesGenericCrt gs crt pos mp) b =<< fullAnotationFromInstanceFree pos mp a
