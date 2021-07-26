@@ -306,21 +306,24 @@ sameTypesNoUnionSpec = sameTypesGeneric (False, True, Map.empty)
 addTypeVariableGeneralized pos f defs stmnt k v = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup k mp of
-        Nothing -> addToMap a rs mp usts k v
-        Just a -> do
-            case f k pos usts a v of
-                Right v -> addToMap a rs mp usts k v
+        Nothing -> addToMap k v
+        Just a -> if collectGenenrics usts a == Set.empty then case f k pos usts a v of
+                Right v -> addToMap k v
+                Left err -> lastResort a rs mp usts (Left err)
+            else specifyInternal pos f defs a v >>= \case
+                Right v -> addToMap k v
                 Left err -> lastResort a rs mp usts (Left err)
     where
-        addToMap a rs mp usts k v = do
+        addToMap k v = do
+            (a, ((rs, mp), usts)) <- get
             put (a, ((rs, Map.insert k v mp), usts))
             stmnt
             reshuffleTypes pos defs
             return $ Right v
         
-        lastResort a rs mp usts x = if a == AnnotationLiteral "_" then addToMap a rs mp usts k v else 
+        lastResort a rs mp usts x = if a == AnnotationLiteral "_" then addToMap k v else 
             case Map.lookup k rs of
-                Just st -> if Set.member v st then addToMap a rs mp usts k v else return x
+                Just st -> if Set.member v st then addToMap k v else return x
                 Nothing -> return x
 
 addTypeVariable :: SourcePos -> (Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation) -> Set.Set Annotation -> Annotation -> Annotation -> SubstituteState (Either String Annotation)
@@ -551,10 +554,8 @@ specifyInternal pos fa defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
                     xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
                     case xs of
                         Right _ -> return $ Right b
-                        Left err ->
-                            if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then 
-                                return $ Left err 
-                            else distinctUnion mp err (Set.toList $ collectGenenrics mp a)
+                        Left err -> if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
+                                else distinctUnion mp err (Set.toList $ collectGenenrics mp a)
         (a, b) -> specifyInternal pos fa defs a b
     where
         f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos fa defs x v1) ps2
