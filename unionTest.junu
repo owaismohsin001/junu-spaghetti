@@ -1,4 +1,4 @@
-newtype Ls(x{}, Nil | Ls(x{} | y{})) = (r, res)
+newtype Ls(x{}, Nil | Ls(x{})) = (r, res)
 
 let base = () => return {}
 let insert = (arr: Nil | Array(m{}), a: n{}) => concat(arr, Array(a))
@@ -18,7 +18,7 @@ len(xs: Nil | Ls(n{})) => Int {
     return len(xs.res)+1
 }
 
-let ins = (a: a{}, ls: Nil | Ls(b{})) => Nil | Ls(a{} | b{}) {return Ls(a, ls)}
+let ins = (a: a{}, ls: Nil | Ls(a{})) => Ls(a, ls)
 
 let xs = ins(true, ins(1, Ls("ddjn", {})))
 xs = ins("ok", xs)

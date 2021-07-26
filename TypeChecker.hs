@@ -519,7 +519,7 @@ specifyInternal pos f defs a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceA
     | id1 /= id2 = return . Left $ unmatchedType a b pos
     | otherwise = do
         (_, ((_, mp), usts)) <- get
-        specifyInternal pos (\k -> if k `Map.member` mp then f k else mergedTypeConcreteEither) defs (NewTypeInstanceAnnotation id1 anns1) b
+        specifyInternal pos (const mergedTypeConcreteEither) defs (NewTypeInstanceAnnotation id1 anns1) b
         where 
             fx rels = do
                 mapM_ sequence_ <$> sequence (Map.map sequence <$> Map.mapWithKey (\k v -> map (\a -> 
@@ -544,15 +544,14 @@ specifyInternal pos fa defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
     mp <- getTypeMap
     case (foldr1 (mergedTypeConcrete pos mp) _as, foldr1 (mergedTypeConcrete pos mp) _bs) of
         (TypeUnion as, TypeUnion bs) -> do
-            xs <-  find isRight <$> mapM (f mp $ Set.toList _as) (Set.toList _bs)
+            xs <- sequence <$> mapM (f mp $ Set.toList _as) (Set.toList _bs)
             case xs of
-                Just _ -> return $ Right b
-                Nothing -> do
-                    xs <- mapM (f mp $ Set.toList as) (Set.toList bs)
-                    case find isRight xs of
-                        Just _ -> return $ Right b
-                        Nothing ->
-                            let err = fromLeft (error "This should not be here, it should always return Left") $ fromJust $ find isLeft xs in
+                Right _ -> return $ Right b
+                Left _ -> do
+                    xs <- sequence <$> mapM (f mp $ Set.toList as) (Set.toList bs)
+                    case xs of
+                        Right _ -> return $ Right b
+                        Left err ->
                             if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then 
                                 return $ Left err 
                             else distinctUnion mp err (Set.toList $ collectGenenrics mp a)
