@@ -1710,7 +1710,7 @@ invertUserDefinedTypes usts = Map.fromList $ Map.elems $ Map.mapWithKey (curry s
 predefinedTypeNodes :: [Node]
 predefinedTypeNodes = map DeclN [
     StructDef (LhsIdentifer "Nil" sourcePos) (StructAnnotation Map.empty) sourcePos,
-    NewTypeDecl (LhsIdentifer "Array" sourcePos) (NewTypeAnnotation "Array" [GenericAnnotation "x" []] $ Map.singleton (LhsIdentifer "a" sourcePos) $ GenericAnnotation "x" []) sourcePos
+    NewTypeDecl (LhsIdentifer "Array" sourcePos) (NewTypeAnnotation "Array" [GenericAnnotation "x" []] $ Map.singleton (LhsIdentifer "_value" sourcePos) $ GenericAnnotation "x" []) sourcePos
     ]
 
 typeCheckedScope :: [Node] -> Either String ([Node], [Node], (UserDefinedTypes, Annotations Annotation))

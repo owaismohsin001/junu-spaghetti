@@ -1,4 +1,4 @@
-function Array(x1) return { _type = "Array", _args = {x1}, a = x1} end
+function Array(x1) return { _type = "Array", _args = {x1}, _value = x1} end
 
 function IsString(a) return type(a) == "string" end
 function IsInt(a) return type(a) == "number" end
@@ -165,7 +165,7 @@ ored = newOpenFunction()
 newOpenInstance(ored, function(a, b) return IsType(a, IsBool) and IsType(b, IsBool) end, function(a, b) return a or b end)
 
 getWrappedArray = function(a)
-    local axx = a.a
+    local axx = a._value
     local ax
     if type(axx) == "table" and axx._wrapped then 
         ax = axx._wrapped
