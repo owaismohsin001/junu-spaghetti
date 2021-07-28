@@ -264,25 +264,25 @@ substituteVariablesOptFilter pred pos defs rels mp usts OpenFunctionAnnotation{}
 
 substituteVariables = substituteVariablesOptFilter True
 
-collectGenericConstraintsOptionalHOF :: Bool -> UserDefinedTypes -> Constraint -> Set.Set Annotation
-collectGenericConstraintsOptionalHOF collectHOFs usts (ConstraintHas lhs cs) = collectGenericConstraintsOptionalHOF collectHOFs usts cs 
-collectGenericConstraintsOptionalHOF collectHOFs usts (AnnotationConstraint ann) = collectGenenricsOptionalHOF collectHOFs usts ann
+collectGenericConstraintsOptionalHOF :: Bool -> Bool -> UserDefinedTypes -> Constraint -> Set.Set Annotation
+collectGenericConstraintsOptionalHOF collectHOFs collectRigids usts (ConstraintHas lhs cs) = collectGenericConstraintsOptionalHOF collectHOFs collectRigids usts cs 
+collectGenericConstraintsOptionalHOF collectHOFs collectRigids usts (AnnotationConstraint ann) = collectGenenricsOptionalHOF collectHOFs collectRigids usts ann
 
-collectGenenricsOptionalHOF :: Bool -> UserDefinedTypes -> Annotation -> Set.Set Annotation
-collectGenenricsOptionalHOF collectHOFs usts fid@(GenericAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraintsOptionalHOF collectHOFs usts) cns)
-collectGenenricsOptionalHOF collectHOFs usts fid@(RigidAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraintsOptionalHOF collectHOFs usts) cns)
-collectGenenricsOptionalHOF collectHOFs usts AnnotationLiteral{} = Set.empty
-collectGenenricsOptionalHOF collectHOFs usts fid@(Annotation ident) = maybe (error "Run your passes in order. You should know that this doesn't exists by now") (const Set.empty) (Map.lookup (LhsIdentifer ident (SourcePos "" (mkPos 0) (mkPos 0))) usts)
-collectGenenricsOptionalHOF collectHOFs usts (NewTypeAnnotation id anns annMap) = Set.unions (Set.map (collectGenenricsOptionalHOF collectHOFs usts) (Set.fromList anns)) `Set.union` foldl1 Set.union (map (collectGenenricsOptionalHOF collectHOFs usts) (Map.elems annMap))
-collectGenenricsOptionalHOF collectHOFs usts (NewTypeInstanceAnnotation id anns) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs usts) (Set.fromList anns)
-collectGenenricsOptionalHOF collectHOFs usts (FunctionAnnotation args ret) = if collectHOFs then Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs usts) (Set.fromList $ args ++ [ret]) else Set.empty
-collectGenenricsOptionalHOF collectHOFs usts (StructAnnotation ms) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs usts) (Set.fromList $ Map.elems ms)
-collectGenenricsOptionalHOF collectHOFs usts (TypeUnion ts) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs usts) ts
-collectGenenricsOptionalHOF collectHOFs usts (OpenFunctionAnnotation args ret ftr _) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs usts) $ Set.fromList (args++[ret, ftr])
+collectGenenricsOptionalHOF :: Bool -> Bool -> UserDefinedTypes -> Annotation -> Set.Set Annotation
+collectGenenricsOptionalHOF collectHOFs collectRigids usts fid@(GenericAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraintsOptionalHOF collectHOFs collectRigids usts) cns)
+collectGenenricsOptionalHOF collectHOFs True usts fid@(RigidAnnotation id cns) = Set.singleton fid `Set.union` Set.unions (map (collectGenericConstraintsOptionalHOF collectHOFs True usts) cns)
+collectGenenricsOptionalHOF collectHOFs False usts fid@(RigidAnnotation id cns) = Set.unions (map (collectGenericConstraintsOptionalHOF collectHOFs False usts) cns)
+collectGenenricsOptionalHOF collectHOFs collectRigids usts AnnotationLiteral{} = Set.empty
+collectGenenricsOptionalHOF collectHOFs collectRigids usts fid@(Annotation ident) = maybe (error "Run your passes in order. You should know that this doesn't exists by now") (const Set.empty) (Map.lookup (LhsIdentifer ident (SourcePos "" (mkPos 0) (mkPos 0))) usts)
+collectGenenricsOptionalHOF collectHOFs collectRigids usts (NewTypeAnnotation id anns annMap) = Set.unions (Set.map (collectGenenricsOptionalHOF collectHOFs collectRigids usts) (Set.fromList anns)) `Set.union` foldl1 Set.union (map (collectGenenricsOptionalHOF collectHOFs collectRigids usts) (Map.elems annMap))
+collectGenenricsOptionalHOF collectHOFs collectRigids usts (NewTypeInstanceAnnotation id anns) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs collectRigids usts) (Set.fromList anns)
+collectGenenricsOptionalHOF collectHOFs collectRigids usts (FunctionAnnotation args ret) = if collectHOFs then Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs collectRigids usts) (Set.fromList $ args ++ [ret]) else Set.empty
+collectGenenricsOptionalHOF collectHOFs collectRigids usts (StructAnnotation ms) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs collectRigids usts) (Set.fromList $ Map.elems ms)
+collectGenenricsOptionalHOF collectHOFs collectRigids usts (TypeUnion ts) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs collectRigids usts) ts
+collectGenenricsOptionalHOF collectHOFs collectRigids usts (OpenFunctionAnnotation args ret ftr _) = Set.unions $ Set.map (collectGenenricsOptionalHOF collectHOFs collectRigids usts) $ Set.fromList (args++[ret, ftr])
 
-collectGenenrics = collectGenenricsOptionalHOF False
-collectGenenricsHOF = collectGenenricsOptionalHOF True
-
+collectGenenrics = collectGenenricsOptionalHOF False True
+collectGenenricsHOF = collectGenenricsOptionalHOF True True
 
 getLookupTypeIfAvailable :: Annotation -> SubstituteState Annotation
 getLookupTypeIfAvailable k = do
@@ -307,13 +307,16 @@ addTypeVariableGeneralized pos f defs stmnt k v = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup k mp of
         Nothing -> addToMap k v
-        Just a -> if collectGenenrics usts a == Set.empty then case f k pos usts a v of
+        Just a -> if collectGenenricsNoRigids usts a == Set.empty && collectGenenricsNoRigids usts v == Set.empty then case f k pos usts a v of
                 Right v -> addToMap k v
                 Left err -> lastResort a rs mp usts (Left err)
-            else specifyInternal pos f defs a v >>= \case
+            else specifyInternal pos f defs x y >>= \case
                 Right v -> addToMap k v
                 Left err -> lastResort a rs mp usts (Left err)
+                where [x, y] = map snd . sortBy (\(a, _) (b, _) -> b `compare` a) $ map (\x -> (length $ collectGenenricsNoRigids usts x, x)) [a, v]
     where
+        collectGenenricsNoRigids = collectGenenricsOptionalHOF False False
+
         addToMap k v = do
             (a, ((rs, mp), usts)) <- get
             put (a, ((rs, Map.insert k v mp), usts))
@@ -558,18 +561,18 @@ specifyInternal pos fa defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
                                 else distinctUnion mp err (Set.toList $ collectGenenrics mp a)
         (a, b) -> specifyInternal pos fa defs a b
     where
-        f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos fa defs x v1) ps2
+        f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos (const sameTypes) defs x v1) ps2
         typeUnionList (TypeUnion xs) action = action $ Set.toList xs
-        typeUnionList a action = specifyInternal pos fa defs a b
-        g mp ps2 v1 = map (\x -> (specifyInternal pos fa defs x v1, x)) ps2
+        typeUnionList a action = specifyInternal pos (const sameTypes) defs a b
+        g mp ps2 v1 = map (\x -> (specifyInternal pos (const sameTypes) defs x v1, x)) ps2
         isRightLifted s = isRight <$> s
         distinctUnion _ err [] = return $ Left err
         distinctUnion mp _ xs = do
             let as' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _as)
             let bs' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _bs)
             usts <- getTypeMap
-            c1 <- specifyInternal pos fa defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) as')
-            c2 <- sequence <$> zipWithM (flip (specifyInternal pos fa defs)) (tail xs) (drop (length xs) as')
+            c1 <- specifyInternal pos (const sameTypes) defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) as')
+            c2 <- sequence <$> zipWithM (flip (specifyInternal pos (const sameTypes) defs)) (tail xs) (drop (length xs) as')
             case (c1, c2) of
                 (Right _, Right _) -> return $ Right $ mergedTypeConcrete pos usts b b
                 (Left err, _) -> return $ Left err
