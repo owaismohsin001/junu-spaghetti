@@ -845,11 +845,13 @@ getAssumptionType (CreateNewType lhs args pos) = do
     case argsn of
         Right as -> case Map.lookup lhs mp of
             Just ntp@(NewTypeAnnotation id anns _) -> 
-                case join $ specify pos <$> Right (Set.unions $ map (collectGenenrics mp) as) <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
-                    Right as -> return $ NewTypeInstanceAnnotation id <$> argsn
-                    Left err -> return $ Left err
-            Just a -> return $ Left $ show a ++ " is not an instantiable type" ++ showPos pos
-            Nothing -> return $ Left $ noTypeFound (show lhs) pos
+                if length anns == length args then 
+                    case join $ specify pos <$> Right (Set.unions $ map (collectGenenrics mp) as) <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
+                        Right as -> return $ NewTypeInstanceAnnotation id <$> argsn
+                        Left err -> return $ Left err
+                else return . Left $ "Expected at least " ++ show (length anns) ++ " arguments to " ++ id ++ " but got only " ++ show (length args) ++ "\n" ++ showPos pos
+            Just a -> return . Left $ show a ++ " is not an instantiable type" ++ showPos pos
+            Nothing -> return . Left $ noTypeFound (show lhs) pos
         Left err -> return $ Left err
 getAssumptionType (DeclN (OpenFunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs (Finalizeable False ann)
 getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft pos)) = do
@@ -1073,10 +1075,10 @@ baseMapping = Map.fromList $ map (second (Finalizeable True)) [
     (LhsIdentifer "mod" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "mul" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
     (LhsIdentifer "div" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "gt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "gte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "lt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "lte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
+    (LhsIdentifer "gt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
+    (LhsIdentifer "gte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
+    (LhsIdentifer "lt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
+    (LhsIdentifer "lte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
     (LhsIdentifer "eq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
     (LhsIdentifer "neq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
     (LhsIdentifer "anded" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Bool"]),
@@ -1455,9 +1457,11 @@ consistentTypesPass p (CreateNewType lhs@(LhsIdentifer id _) args pos) = do
     case argsn of
         Right as -> case Map.lookup lhs mp of
             Just ntp@(NewTypeAnnotation id anns _) -> 
+                if length args == length anns then
                 case specify pos <$> Right (Set.unions $ map (collectGenenrics mp) as) <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
                     Right _ -> return $ NewTypeInstanceAnnotation id <$> argsn
                     Left err -> return $ Left err
+                else return . Left $ "Expected at least " ++ show (length anns) ++ " arguments to " ++ id ++ " but got only " ++ show (length args) ++ "\n" ++ showPos pos
             Just a -> return $ Left $ show a ++ " is not an instantiable type" ++ showPos pos
             Nothing -> return $ Left $ noTypeFound id pos
         Left err -> return $ Left err
