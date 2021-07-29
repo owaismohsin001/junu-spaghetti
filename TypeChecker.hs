@@ -301,7 +301,7 @@ changeType pos defs k v = do
 reshuffleTypes :: P.SourcePos -> Set.Set Annotation -> SubstituteState ()
 reshuffleTypes pos defs = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeType pos defs) mp) =<< get
 
-sameTypesNoUnionSpec = sameTypesGeneric (False, True, Map.empty)
+sameTypesNoUnionSpec = sameTypesGeneric (False, True, False, Map.empty)
 
 addTypeVariableGeneralized pos f defs stmnt k v = do
     (a, ((rs, mp), usts)) <- get
@@ -310,10 +310,11 @@ addTypeVariableGeneralized pos f defs stmnt k v = do
         Just a -> if collectGenenricsNoRigids usts a == Set.empty && collectGenenricsNoRigids usts v == Set.empty then case f k pos usts a v of
                 Right v -> addToMap k v
                 Left err -> lastResort a rs mp usts (Left err)
-            else specifyInternal pos f defs x y >>= \case
+            else specifyInternal pos f defs a v >>= \case
                 Right v -> addToMap k v
-                Left err -> lastResort a rs mp usts (Left err)
-                where [x, y] = map snd . sortBy (\(a, _) (b, _) -> b `compare` a) $ map (\x -> (length $ collectGenenricsNoRigids usts x, x)) [a, v]
+                Left _ -> specifyInternal pos f defs v a >>= \case
+                    Right v -> addToMap k v
+                    Left err -> lastResort a rs mp usts (Left err)
     where
         collectGenenricsNoRigids = collectGenenricsOptionalHOF False False
 
@@ -603,7 +604,7 @@ getFirst a b pos (x:xs) = x >>= \case
     Left _ -> getFirst a b pos xs
 
 basicSpecifyFunction :: Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
-basicSpecifyFunction _ pos usts a b = sameTypesNoUnionSpec pos usts a b $> b
+basicSpecifyFunction _ pos usts a b = sameTypesGeneric (False, True, True, Map.empty) pos usts a b $> b
 
 -- specify :: SourcePos -> Set.Set Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Either String (Annotation, TypeRelations)
 specifyGeneralized pos f defs base mp a b = (,rel) <$> ann where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos f defs a b) (a, ((Map.empty, base), mp))
@@ -1099,10 +1100,10 @@ unionFrom a b x =
         Right _ -> b
         Left err -> createUnion a b
 
-mergedTypeConcrete = mergedType (True, False, Map.empty) comparisionEither
+mergedTypeConcrete = mergedType (True, False, False, Map.empty) comparisionEither
 mergedTypeConcreteEither pos mp a b = Right $ mergedTypeConcrete pos mp a b
 
-mergedType :: (Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
+mergedType :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
 mergedType _ crt pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
     if a == b then a else createUnion a b
 mergedType gs crt pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
@@ -1159,43 +1160,48 @@ mergedType gs crt pos mp (Annotation id) b =
 mergedType gs crt pos mp b (Annotation id) = 
     case Map.lookup (LhsIdentifer id pos) mp of
         Just a -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
-mergedType tgs@(_, sensitive, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
+mergedType tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
     | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = createUnion a b
     | otherwise = if id1 == id2 then unionFrom a b $ zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a else createUnion a b
-mergedType tgs@(_, sensitive, gs) crt pos mp a@(GenericAnnotation _ acs) b = 
+mergedType tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation _ acs) b = 
     if sensitive then 
         unionFrom a b $ mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs
     else createUnion a b
-mergedType tgs@(_, sensitive, gs) crt pos mp b a@(GenericAnnotation _ acs) = 
+mergedType tgs@(_, sensitive, _, gs) crt pos mp b a@(GenericAnnotation _ acs) = 
     if sensitive then 
         unionFrom a b $ mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs *> success crt a
     else createUnion a b
-mergedType (considerUnions, sensitive, gs) crt pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
+mergedType (considerUnions, sensitive, leftGeneral, gs) crt pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
     OpenFunctionAnnotation (init ls) (last ls) forType impls where 
-        ls = zipWith (mergedType (considerUnions, sensitive, gs') crt pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2])
+        ls = zipWith (mergedType (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs 
-mergedType (considerUnions, sensitive, gs) crt pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
+mergedType (considerUnions, sensitive, leftGeneral, gs) crt pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
     FunctionAnnotation (init ls) (last ls) where
-        ls = zipWith (mergedType (considerUnions, sensitive, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
+        ls = zipWith (mergedType (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
 mergedType gs crt pos mp a@(RigidAnnotation id1 _) b@(RigidAnnotation id2 _) 
     | id1 == id2 = a
     | otherwise = createUnion a b
 mergedType _ crt pos _ a b = createUnion a b
 
-sameTypesGenericCrt :: (Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
+sameTypesGenericCrt :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
 sameTypesGenericCrt _ crt pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
     if a == b then success crt a else failout crt a b pos
 sameTypesGenericCrt gs crt pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
     if length as == length bs then (\xs -> FunctionAnnotation (init xs) (last xs)) <$> ls
     else failout crt a b pos
     where ls = zipWithM (sameTypesGenericCrt gs crt pos mp) (as ++ [ret1]) (bs ++ [ret2])
-sameTypesGenericCrt (_, gs, cns) crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+sameTypesGenericCrt (_, gs, leftGeneral, cns) crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = Left $ unmatchedType a b pos
-    | otherwise = sameTypesGenericCrt (True, gs, cns) crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
-sameTypesGenericCrt gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
+    | otherwise = sameTypesGenericCrt (True, gs, leftGeneral, cns) crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
+sameTypesGenericCrt (_, gs, leftGeneral, cns) crt pos mp a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeAnnotation id2 anns2 _)
+    | id1 /= id2 = Left $ unmatchedType a b pos
+    | leftGeneral = sameTypesGenericCrt (True, gs, leftGeneral, cns) crt pos mp b (NewTypeInstanceAnnotation id1 anns1)
+    | otherwise = Left $ unmatchedType a b pos
+sameTypesGenericCrt gs@(_, _, leftGeneral, _) crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
     | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 <$> ls
-    | e1 == e2 && length as1 < length as2 = flip (sameTypesGenericCrt gs crt pos mp) b =<< fullAnotationFromInstanceFree pos mp a
+    | e1 == e2 && length as1 < length as2 && isGeneralizedInstanceFree pos a mp = flip (sameTypesGenericCrt gs crt pos mp) b =<< fullAnotationFromInstanceFree pos mp a
+    | e1 == e2 && length as1 > length as2 && isGeneralizedInstanceFree pos b mp && leftGeneral = sameTypesGenericCrt gs crt pos mp a =<< fullAnotationFromInstanceFree pos mp b
     | otherwise = failout crt a b pos 
     where ls = zipWithM (sameTypesGenericCrt gs crt pos mp) as1 as2
 sameTypesGenericCrt gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
@@ -1218,11 +1224,11 @@ sameTypesGenericCrt gs crt pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
         Left err -> failiure crt err
     where
         f mp ps2 v1 = fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGenericCrt gs crt pos mp x v1) ps2
-sameTypesGenericCrt tgs@(considerUnions, _, _) crt pos mp a@(TypeUnion st) b
+sameTypesGenericCrt tgs@(considerUnions, _, _, _) crt pos mp a@(TypeUnion st) b
     | considerUnions =
         fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGenericCrt tgs crt pos mp x b) $ Set.toList st
     | otherwise = Left $ unmatchedType a b pos
-sameTypesGenericCrt tgs@(considerUnions, _, _) crt pos mp b a@(TypeUnion st) = Left $ unmatchedType a b pos
+sameTypesGenericCrt tgs@(considerUnions, _, _, _) crt pos mp b a@(TypeUnion st) = Left $ unmatchedType a b pos
 sameTypesGenericCrt gs crt pos mp (Annotation id1) b@(Annotation id2)
     | id1 == id2 = success crt b
     | otherwise = case Map.lookup (LhsIdentifer id1 pos) mp of
@@ -1238,36 +1244,36 @@ sameTypesGenericCrt gs crt pos mp b (Annotation id) =
     case Map.lookup (LhsIdentifer id pos) mp of
         Just a -> sameTypesGenericCrt gs crt pos mp a b
         Nothing -> failiure crt $ noTypeFound id pos
-sameTypesGenericCrt tgs@(_, sensitive, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
+sameTypesGenericCrt tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
     | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = Left $ "Expected " ++ show a ++ " but got " ++ show b
     | otherwise = if id1 == id2 then zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a else failout crt a b pos
 sameTypesGenericCrt gs crt pos mp a@(GenericAnnotation id1 cs1) b@(RigidAnnotation id2 cs2) = sameTypesGenericCrt gs crt pos mp (RigidAnnotation id1 cs1) (RigidAnnotation id2 cs2) $> b
 sameTypesGenericCrt gs crt pos mp a@(RigidAnnotation id1 cs1) b@(GenericAnnotation id2 cs2) = sameTypesGenericCrt gs crt pos mp (RigidAnnotation id1 cs1) (RigidAnnotation id2 cs2) $> b
-sameTypesGenericCrt tgs@(_, sensitive, gs) crt pos mp a@(RigidAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
+sameTypesGenericCrt tgs@(_, sensitive, _, gs) crt pos mp a@(RigidAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
     | id1 == id2 = zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a 
     | otherwise = failout crt a b pos
-sameTypesGenericCrt tgs@(_, sensitive, gs) crt pos mp a@(GenericAnnotation _ acs) b = 
+sameTypesGenericCrt tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation _ acs) b = 
     if sensitive then 
         mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs *> success crt b
     else Left $ unmatchedType a b pos
-sameTypesGenericCrt tgs@(_, sensitive, gs) crt pos mp b a@(GenericAnnotation _ acs) = 
+sameTypesGenericCrt tgs@(_, sensitive, _, gs) crt pos mp b a@(GenericAnnotation _ acs) = 
     if sensitive then 
         mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs *> success crt a
     else Left $ unmatchedType a b pos
-sameTypesGenericCrt (considerUnions, sensitive, gs) crt pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
+sameTypesGenericCrt (considerUnions, sensitive, leftGeneral, gs) crt pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
     (\xs -> OpenFunctionAnnotation (init xs) (last xs) forType impls) <$> ls where 
-        ls = zipWithM (sameTypesGenericCrt (considerUnions, sensitive, gs') crt pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2])
+        ls = zipWithM (sameTypesGenericCrt (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs 
-sameTypesGenericCrt (considerUnions, sensitive, gs) crt pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
+sameTypesGenericCrt (considerUnions, sensitive, leftGeneral, gs) crt pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
     (\xs -> FunctionAnnotation (init xs) (last xs)) <$> ls where
-        ls = zipWithM (sameTypesGenericCrt (considerUnions, sensitive, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
+        ls = zipWithM (sameTypesGenericCrt (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
         gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
 sameTypesGenericCrt _ crt pos _ a b = failout crt a b pos
 
 genericsFromList :: [Annotation] -> Map.Map String [Constraint]
 genericsFromList anns = foldr1 Map.union (map getGenerics anns)
 
-matchConstraint :: (Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> SourcePos -> UserDefinedTypes -> Constraint -> Constraint -> Either String Constraint
+matchConstraint :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns String Annotation -> SourcePos -> UserDefinedTypes -> Constraint -> Constraint -> Either String Constraint
 matchConstraint gs crt pos mp c@(AnnotationConstraint a) (AnnotationConstraint b) = c <$ sameTypesGenericCrt gs crt pos mp a b
 matchConstraint gs crt pos mp a@(ConstraintHas lhs cns) b@(AnnotationConstraint ann) = 
     case ann of
@@ -1308,7 +1314,7 @@ createUnion a b = go a b where
 sameTypesGeneric a = sameTypesGenericCrt a comparisionEither
 
 sameTypes :: SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either String Annotation
-sameTypes = sameTypesGeneric (True, False, Map.empty)
+sameTypes = sameTypesGeneric (True, False, False, Map.empty)
 
 getTypeMap :: State (a, (b, c)) c
 getTypeMap = gets (snd . snd)
