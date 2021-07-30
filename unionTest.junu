@@ -29,7 +29,11 @@ let apply2 = (x: a{}, g: (b{}) -> c{}, f: (a{}) -> b{}) => {
     return g(f(x))
 }
 
-let lenApply = apply2(xs, (a: Int) => a*2, (ls: Ls(k{})) => len(ls))
+let lenApply = apply2(xs, (a: hasLength{.length: Int}) => {
+    a.length = a.length*2
+    return a
+}, (ls: Ls(k{})) => return {list: ls, length: len(ls)})
+
 println(lenApply)
 
 if res notis Nil {
