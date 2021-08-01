@@ -322,7 +322,7 @@ addTypeVariable pos f defs stmnt k v = do
         addToMap k v = do
             (a, ((rs, mp), usts)) <- get
             if k `Set.member` collectGenenricsNoRigidsHOF usts v then 
-                trace ("!! => " ++ show k) return . Left $ "Cannot create infinite type " ++ show k ++ "\n" ++ showPos pos 
+                return . Left $ "Cannot create infinite type " ++ show k ++ " in " ++ show k ++ " ~ " ++ show v ++ "\n" ++ showPos pos 
             else do
                 put (a, ((rs, Map.insert k v mp), usts))
                 fromMaybe (updateRelations pos stmnt f defs) stmnt >>= \case
