@@ -317,13 +317,17 @@ addTypeVariable pos f defs stmnt k v = do
                     Left err -> lastResort a rs mp usts (Left err)
     where
         collectGenenricsNoRigids = collectGenenricsOptionalHOF False False
+        collectGenenricsNoRigidsHOF = collectGenenricsOptionalHOF True False
 
         addToMap k v = do
             (a, ((rs, mp), usts)) <- get
-            put (a, ((rs, Map.insert k v mp), usts))
-            fromMaybe (updateRelations pos stmnt f defs) stmnt >>= \case
-                Right _ -> reshuffleTypes pos defs $> Right v
-                Left err -> return $ Left err
+            if k `Set.member` collectGenenricsNoRigidsHOF usts v then 
+                trace ("!! => " ++ show k) return . Left $ "Cannot create infinite type " ++ show k ++ "\n" ++ showPos pos 
+            else do
+                put (a, ((rs, Map.insert k v mp), usts))
+                fromMaybe (updateRelations pos stmnt f defs) stmnt >>= \case
+                    Right _ -> reshuffleTypes pos defs $> Right v
+                    Left err -> return $ Left err
 
         lastResort a rs mp usts x = if a == AnnotationLiteral "_" then addToMap k v else 
             case Map.lookup k rs of
@@ -588,13 +592,10 @@ specifyInternal pos stmnt f defs a@(TypeUnion st) b = getFirst a b pos $ map (fl
 specifyInternal pos stmnt f defs a@(GenericAnnotation id cns) b = 
     (\case
         Right _ -> do
-            usts <- getTypeMap
-            let genericsInb = collectGenenricsHOF usts b
-            if Set.member a genericsInb then return . Left $ "Cannot create infinite type " ++ show a ++ "\n" ++ showPos pos else do
-                a <- addTypeVariable pos f defs stmnt a b
-                case a of
-                    Right _ -> return $ Right b
-                    Left err -> return $ Left err
+            a <- addTypeVariable pos f defs stmnt a b
+            case a of
+                Right _ -> return $ Right b
+                Left err -> return $ Left err
         Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos stmnt f defs b) cns
 specifyInternal pos _ _ _ a b = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
 
