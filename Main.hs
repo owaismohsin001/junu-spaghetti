@@ -102,7 +102,9 @@ instance CodeGen Lua where
 parseFile :: String -> [Char] -> Either String ([Node], [Node], (UserDefinedTypes, Annotations Annotation))
 parseFile fn text = 
     case P.runParser Parser.wholeProgramParser fn (filter (/= '\t') text) of
-        Right ns -> typeCheckedScope ns
+        Right ns -> case typeCheckedScope ns of
+            Left err -> Left $ show err
+            Right a -> Right a
         Left e -> Left $ P.errorBundlePretty e
 
 replaceExtenstion :: FilePath -> String -> String

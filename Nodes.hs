@@ -173,6 +173,59 @@ instance Ord Decl where
 data Struct = Struct (Map.Map Lhs Node) P.SourcePos deriving(Show)
 newtype StructNoPos = StructNoPos (Map.Map Lhs Node) deriving(Eq, Ord)
 
+type Generic = Annotation
+
+showPos :: SourcePos -> String
+showPos (P.SourcePos s ln cn) = 
+    "In file: " ++ s ++ ", at line: " ++ tail (dropWhile (/= ' ') (show ln)) ++ ", at colounm: " ++ tail (dropWhile (/= ' ') (show cn))
+
+data ErrorType =
+    UnmatchedType Annotation Annotation P.SourcePos
+    | UnmatchedConstraint Constraint Constraint P.SourcePos
+    | ExpectedSomething String Annotation P.SourcePos
+    | FieldNotFound Lhs Annotation P.SourcePos
+    | UnsearchableType Lhs Annotation P.SourcePos
+    | NoEstablishedRelationWith Annotation P.SourcePos 
+    | UnmatchablePredicates Annotation P.SourcePos 
+    | UnificationError Generic ErrorType
+    | UnInferrableType (Maybe ErrorType) P.SourcePos
+    | UnCallableType Annotation P.SourcePos
+    | NoInstanceFound Annotation Annotation P.SourcePos
+    | IrreconcilableAnnotatatedType Lhs Annotation Annotation P.SourcePos
+    | InfiniteTypeError Generic Annotation P.SourcePos
+    | UnExtendableType Annotation P.SourcePos
+    | UninstantiableType Annotation P.SourcePos
+    | UnspecifiableTypeSpecified P.SourcePos
+    | NotOccuringTypeOpenFunction Annotation P.SourcePos
+    | NoDefinitionFound Lhs P.SourcePos
+    | CallError [Annotation] [Annotation] P.SourcePos
+    | UnequalArguments [Annotation] [Annotation] P.SourcePos
+    | NoTypeFound String P.SourcePos
+
+instance Show ErrorType where
+    show (UnmatchedType a b pos) = "Can't match expected type " ++ show a ++ " with given type " ++ show b ++ "\n" ++ showPos pos
+    show (NotOccuringTypeOpenFunction ann pos) = "The argument " ++ show ann ++ " does not even once occur in the whole method\n" ++ showPos pos
+    show (NoDefinitionFound lhs pos) = show lhs ++ " not found in this scope\n" ++ showPos pos
+    show (UnCallableType ann pos) = "Can't call a value of type " ++ show ann ++ "\n" ++ showPos pos
+    show (NoInstanceFound opf ann pos) = "Could find instance " ++ show opf ++ " for " ++ show ann ++ "\n" ++ showPos pos
+    show (UnInferrableType (Just errT) pos) = "Could not infer the return type: " ++ show errT ++ "\n" ++ showPos pos
+    show (UnInferrableType Nothing pos) = "Could not infer the type of function at \n" ++ showPos pos
+    show (UnExtendableType ann pos) = "Cannot extend function " ++ show ann ++ "\n" ++ showPos pos
+    show (UnspecifiableTypeSpecified pos) = "Forbidden to specify specified type variables\n" ++ showPos pos
+    show (UninstantiableType ann pos) = show ann ++ " is not an instantiable type\n" ++ showPos pos
+    show (ExpectedSomething s ann pos) = "Expected a type " ++ s ++ ", got type " ++ show ann ++ " from " ++ show ann ++ "\n" ++ showPos pos
+    show (FieldNotFound lhs ann pos) = "No field named " ++ show lhs ++ " found in " ++ show ann ++ "\n" ++ showPos pos
+    show (UnequalArguments anns1 anns2 pos) = "Unequal arguments " ++ show anns1 ++ " can't be matched with " ++ show anns2
+    show (UnsearchableType lhs ann pos) = "Can't search for field " ++ show lhs ++ " in " ++ show ann ++ "\n" ++ showPos pos
+    show (UnmatchedConstraint a b pos) = "Can't match expected constraint " ++ show a ++ " with the given constraint " ++ show b ++ "\n" ++ showPos pos
+    show (UnmatchablePredicates ann pos) = "No set matching predicate notis " ++ show ann ++ "\n" ++ showPos pos
+    show (NoEstablishedRelationWith r pos) = "No relation on " ++ show r ++ " has been established\n" ++ showPos pos
+    show (CallError fargs args pos) = "Expected " ++ show fargs ++ " arguments but got " ++ show args ++ " args"
+    show (UnificationError g err) = "Impossible unification in " ++  show g ++ " because of the error: " ++ show err
+    show (IrreconcilableAnnotatatedType lhs ann val pos) = "In the definition of " ++ show lhs ++ " it wan not possible to reconcile annotated " ++ show ann ++ " with " ++ show val ++ "\n" ++ showPos pos
+    show (InfiniteTypeError g ann pos) = "Cannot create infinite type " ++ show g ++ " in " ++ show g ++ " ~ " ++ show ann ++ "\n" ++ showPos pos 
+    show (NoTypeFound annString pos) = "No type named " ++ annString ++ " found\n" ++ showPos pos
+
 toStructNoPos :: Struct -> StructNoPos
 toStructNoPos (Struct xs _) = StructNoPos xs
 
@@ -298,7 +351,6 @@ flipFinalizeable (Finalizeable b a) = Finalizeable (not b) a
 finalize :: Finalizeable a -> Finalizeable a
 finalize (Finalizeable _ a) = Finalizeable True a
 
-type Generic = Annotation
 type TypeRelations = Map.Map Annotation (Set.Set Generic)
 type SubstituteState = State (Annotation, ((TypeRelations, Map.Map Generic Annotation), UserDefinedTypes))
 
