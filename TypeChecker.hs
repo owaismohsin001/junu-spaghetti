@@ -486,7 +486,7 @@ specifyInternal pos stmnt f defs a@(Annotation id1) b@(Annotation id2)
     | otherwise = (\mp -> case Map.lookup (LhsIdentifer id1 pos) mp of 
         Just a' -> case Map.lookup (LhsIdentifer id2 pos) mp of
             Just b' -> specifyInternal pos stmnt f defs a' b'
-            Nothing -> undefined
+            Nothing -> return . Left $ NoTypeFound id2 pos
         Nothing -> return . Left $ NoTypeFound id1 pos) =<< getTypeMap
 specifyInternal pos stmnt f defs a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
     Just a' -> specifyInternal pos stmnt f defs a' b
