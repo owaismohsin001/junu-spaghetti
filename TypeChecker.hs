@@ -1475,6 +1475,7 @@ consistentTypesPass p (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
                 Right ann' -> do
                     insertAnnotation lhs $ Finalizeable False ann'
                     mapM_ getAssumptionType ts
+                    t' <- if p == RefineAssumtpions then return . Right $ [AnnotationLiteral "_"] else sequence <$> mapM (consistentTypesPass RefineAssumtpions) ts
                     ts' <- sequence <$> mapM (consistentTypesPass p) ts
                     popScope
                     pushScope
@@ -1485,12 +1486,15 @@ consistentTypesPass p (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
                                 Right ann' -> do
                                     insertAnnotation lhs $ Finalizeable False ann'
                                     mapM_ getAssumptionType es
+                                    e' <- if p == RefineAssumtpions then return . Right $ [AnnotationLiteral "_"] else sequence <$> mapM (consistentTypesPass RefineAssumtpions) es
                                     e <- sequence <$> mapM (consistentTypesPass p) es
                                     popScope
-                                    let res = case (ts', e) of
-                                            (Right b, Right c) -> Right $ AnnotationLiteral "_"
-                                            (Left a, _) -> Left a
-                                            (_, Left a) -> Left a
+                                    let res = case (ts', t', e, e') of
+                                            (Right _, Right _, Right _, Right _) -> Right $ AnnotationLiteral "_"
+                                            (Left a, _, _, _) -> Left a
+                                            (_, Left a, _, _) -> Left a
+                                            (_, _, Left a, _) -> Left a
+                                            (_, _, _, Left a) -> Left a
                                     return res
                                 Left err -> return $ Left err
 consistentTypesPass p (IfStmnt cond ts es pos) = do
@@ -1501,17 +1505,21 @@ consistentTypesPass p (IfStmnt cond ts es pos) = do
             c <- consistentTypesPass p cond
             pushScope
             mapM_ getAssumptionType ts
+            t' <- if p == RefineAssumtpions then return . Right $ [AnnotationLiteral "_"] else sequence <$> mapM (consistentTypesPass RefineAssumtpions) ts
             t <- sequence <$> mapM (consistentTypesPass p) ts
             popScope
             pushScope
             mapM_ getAssumptionType es
+            e' <- if p == RefineAssumtpions then return . Right $ [AnnotationLiteral "_"] else sequence <$> mapM (consistentTypesPass RefineAssumtpions) es
             e <- sequence <$> mapM (consistentTypesPass p) es
             popScope
-            let res = case (c, t, e) of
-                    (Right a, Right b, Right c) -> Right $ AnnotationLiteral "_"
-                    (Left a, _, _) -> Left a
-                    (_, Left a, _) -> Left a
-                    (_, _, Left a) -> Left a
+            let res = case (c, t, e, e', t') of
+                    (Right a, Right b, Right c, Right e', Right t') -> Right $ AnnotationLiteral "_"
+                    (Left a, _, _, _, _) -> Left a
+                    (_, Left a, _, _, _) -> Left a
+                    (_, _, Left a, _, _) -> Left a
+                    (_, _, _, Left a, _) -> Left a
+                    (_, _, _, _, Left a) -> Left a
             return res
         Left err -> return $ Left err
 consistentTypesPass p (StructN (Struct ns _)) = (\case
