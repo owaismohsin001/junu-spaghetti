@@ -882,8 +882,9 @@ getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
         Right fun@(OpenFunctionAnnotation anns ret' ft impls) -> 
             case getSpecificationRules pos (collectGenenricsHOF mp implft) Map.empty mp ft implft of
                 Right (_, base, _) -> do
-                    let (specificationRules, rels) = getPartialNoUnderScoreSpecificationRules pos Set.empty Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
-                    case substituteVariables pos (Set.unions $ map (collectGenenrics mp . snd) args) rels specificationRules mp ret' of
+                    let defsNoRet = Set.unions $ map (collectGenenrics mp . snd) args
+                    let (specificationRules, rels) = getPartialNoUnderScoreSpecificationRules pos defsNoRet Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
+                    case substituteVariables pos defsNoRet rels specificationRules mp ret' of
                         Left a -> return . Left $ UnInferrableType (Just a) pos
                         Right inferredRetType ->
                             let spfun = makeFunAnnotation args inferredRetType in
