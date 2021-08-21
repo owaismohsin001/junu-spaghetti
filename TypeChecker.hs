@@ -221,7 +221,7 @@ firstPreferablyDefinedRelation pos usts defs mp rs k =
             inDefs s = Set.filter (flip (isDefMember usts) defs) s
             defRes = 
                 case Map.elems $ Map.filter (\s -> isDefMember usts k s && not (Set.disjoint defs s)) $ Map.mapWithKey Set.insert rs of
-                    [] -> Left $ "No relation of generic " ++ show k ++ " found\n" ++ showPos pos
+                    [] -> Left $ NoEstablishedRelationWith k pos
                     xs -> Right $ Set.elemAt 0 $ inDefs $ head xs
 
 substituteConstraintsOptFilter pred pos defs rels mp usts (ConstraintHas lhs cs) = ConstraintHas lhs <$> substituteConstraintsOptFilter pred pos defs rels mp usts cs 
