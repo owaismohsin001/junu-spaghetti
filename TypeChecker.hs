@@ -200,11 +200,12 @@ isGeneric pos usts ann = evalState (go pos usts ann) Map.empty where
     go pos mp (TypeUnion ts) = or <$> mapM (go pos mp) (Set.toList ts)
     go pos mp OpenFunctionAnnotation{} = return False
 
-firstPreferablyDefinedRelation pos usts defs mp rs k =
+firstPreferablyDefinedRelation pos usts prevs defs mp rs k =
     case Map.lookup k rs of
         Just s -> 
             if notnull stf then Right . defResIfNull $ inDefs stf 
             else if notnull deftf then Right . defResIfNull $ inDefs deftf
+            else if notnull prevs then Right . defResIfNull $ inDefs prevs
             else case defRes of
                     Right x -> Right x
                     Left _ -> Right $ Set.elemAt 0 $ if notnull $ inDefs s then inDefs s else s
@@ -222,10 +223,7 @@ firstPreferablyDefinedRelation pos usts defs mp rs k =
             defRes = 
                 case Map.elems $ Map.filter (\s -> isDefMember usts k s && not (Set.disjoint defs s)) $ Map.mapWithKey Set.insert rs of
                     [] -> Left $ NoEstablishedRelationWith k pos
-                    xs -> Right $ Set.elemAt 0 $ inDefs $ head xs
-
-substituteConstraintsOptFilter pred pos defs rels mp usts (ConstraintHas lhs cs) = ConstraintHas lhs <$> substituteConstraintsOptFilter pred pos defs rels mp usts cs 
-substituteConstraintsOptFilter pred pos defs rels mp usts (AnnotationConstraint ann) = AnnotationConstraint <$> substituteVariablesOptFilter pred pos defs rels mp usts ann
+                    xs -> Right . Set.elemAt 0 . inDefs $ head xs
 
 isDefMember :: UserDefinedTypes -> Annotation -> Set.Set Annotation -> Bool
 isDefMember usts a defs = rigidizeTypeVariables usts a `Set.member` defs || a `Set.member` defs
@@ -238,27 +236,54 @@ substituteVariablesOptFilter :: Bool
     -> UserDefinedTypes
     -> Annotation
     -> Either ErrorType Annotation
-substituteVariablesOptFilter pred pos defs rels mp usts fid@(GenericAnnotation id cns) = 
-    maybe g (\x -> if sameTypesBool pos usts fid x then g else Right x) (Map.lookup fid mp)
-    where 
-        f x = case firstPreferablyDefinedRelation pos usts defs mp rels x of
-            Right a -> Right a
-            Left _ -> Right x
-        g = mapM (substituteConstraintsOptFilter pred pos defs rels mp usts) cns >>= f . GenericAnnotation id
-substituteVariablesOptFilter pred pos defs rels mp usts (RigidAnnotation id cns) = 
-    case substituteVariablesOptFilter pred pos defs rels mp usts $ GenericAnnotation id cns of
-        Right (GenericAnnotation id cns) -> Right $ RigidAnnotation id cns
-        Right a -> Right a
-        Left err -> Left err
-substituteVariablesOptFilter pred pos defs rels mp usts id@AnnotationLiteral{} = Right id
-substituteVariablesOptFilter pred pos defs rels mp usts fid@(Annotation id) = maybe (Left $ NoTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
-substituteVariablesOptFilter pred pos defs rels mp usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) anns <*> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) annMap
-substituteVariablesOptFilter pred pos defs rels mp usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) anns
-substituteVariablesOptFilter pred pos defs rels mp usts (FunctionAnnotation args ret) = FunctionAnnotation <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) args <*> substituteVariablesOptFilter pred pos defs rels mp usts ret
-substituteVariablesOptFilter pred pos defs rels mp usts (StructAnnotation ms) = StructAnnotation <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) ms
-substituteVariablesOptFilter pred pos defs rels mp usts (TypeUnion ts) = 
-    foldr1 (mergedTypeConcrete pos usts) . (if pred then filter (\a -> not (isGeneric pos usts a) || (isGeneric pos usts a && isDefMember usts a defs)) else id) <$> mapM (substituteVariablesOptFilter pred pos defs rels mp usts) (Set.toList ts)
-substituteVariablesOptFilter pred pos defs rels mp usts OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
+substituteVariablesOptFilter pred pos defs rels mp usts n = evalState (go pred rels mp n) Set.empty where
+    goConstraints :: Bool
+        -> Map.Map Annotation (Set.Set Annotation)
+        -> Map.Map Annotation Annotation
+        -> Constraint
+        -> State (Set.Set Annotation) (Either ErrorType Constraint)
+    goConstraints pred rels mp (ConstraintHas lhs cs) = goConstraints pred rels mp cs >>= (\a -> return $ ConstraintHas lhs <$> a)
+    goConstraints pred rels mp (AnnotationConstraint ann) = go pred rels mp ann >>= (\a -> return $ AnnotationConstraint <$> a)
+
+    go :: Bool
+        -> Map.Map Annotation (Set.Set Annotation)
+        -> Map.Map Annotation Annotation
+        -> Annotation
+        -> State (Set.Set Annotation) (Either ErrorType Annotation)
+    go pred rels mp fid@(GenericAnnotation id cns) =
+        maybe g (\x -> if sameTypesBool pos usts fid x then g else return $ Right x) (Map.lookup fid mp) >>= \case
+            Right retGen -> modify (retGen `Set.insert`) >> return (Right retGen)
+            Left err -> return $ Left err
+        where 
+            f gs x = case firstPreferablyDefinedRelation pos usts gs defs mp rels x of
+                Right a -> Right a
+                Left _ -> Right x
+            g = join <$> (mapM (goConstraints pred rels mp) cns >>= (\case
+                Left err -> return $ Left err
+                Right x -> get >>= \gs -> return $ Right $ (f gs . GenericAnnotation id) x) . sequence)
+    go pred rels mp (RigidAnnotation id cns) = 
+        go pred rels mp (GenericAnnotation id cns) >>= \case
+            Right (GenericAnnotation id cns) -> return . Right $ RigidAnnotation id cns
+            Right a -> return $ Right a
+            Left err -> return $ Left err
+    go pred rels mp id@AnnotationLiteral{} = return $ Right id
+    go pred rels mp fid@(Annotation id) = return $ maybe (Left $ NoTypeFound id pos) Right (Map.lookup (LhsIdentifer id pos) usts)
+    go pred rels mp (NewTypeAnnotation id anns annMap) = do
+        anns' <- sequence <$> mapM (go pred rels mp) anns
+        annMap' <- sequence <$> mapM (go pred rels mp) annMap
+        return (NewTypeAnnotation id <$> anns' <*> annMap')
+    go pred rels mp (NewTypeInstanceAnnotation id anns) =
+        (\xanns -> return $ NewTypeInstanceAnnotation id <$> xanns) . sequence =<< mapM (go pred rels mp) anns
+    go pred rels mp (FunctionAnnotation args ret) = mapM (go pred rels mp) args >>=
+        (\args'
+        -> go pred rels mp ret
+                >>= \ ret' -> return $ FunctionAnnotation <$> args' <*> ret')
+        . sequence
+    go pred rels mp (StructAnnotation ms) = 
+        (\ms' -> return $ StructAnnotation <$> ms') . sequence =<< mapM (go pred rels mp) ms
+    go pred rels mp (TypeUnion ts) = 
+        (\xs -> return $ foldr1 (mergedTypeConcrete pos usts) . (if pred then filter (\a -> not (isGeneric pos usts a) || (isGeneric pos usts a && isDefMember usts a defs)) else id) <$> xs) . sequence =<< mapM (go pred rels mp) (Set.toList ts)
+    go pred rels mp OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
 substituteVariables = substituteVariablesOptFilter True
 
