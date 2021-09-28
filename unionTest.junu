@@ -20,9 +20,14 @@ len(xs: Nil | Ls(n{})) => Int {
 
 let ins = (a: a{}, ls: Nil | Ls(a{})) => Ls(a, ls)
 
+let concatList = (as: Nil | Ls(z{}), bs: Nil | Ls(z{})) => {
+    if as is Nil { return bs }
+    return Ls(as.r, concatList(as.res, bs))
+}
+
 let xs = ins(true, ins(1, Ls("ddjn", {})))
 xs = ins("ok", xs)
-xs = ins({x: 8}, xs)
+xs = concatList(Ls({x: 8}, {}), xs)
 println(len(xs))
 
 let apply2 = (x: a{}, g: (b{}) -> c{}, f: (a{}) -> b{}) => {
@@ -32,7 +37,7 @@ let apply2 = (x: a{}, g: (b{}) -> c{}, f: (a{}) -> b{}) => {
 let lenApply = apply2(xs, (a: hasLength{.length: Int}) => {
     a.length = a.length*2
     return a
-}, (ls: Ls(k{})) => return {list: ls, length: len(ls)})
+}, (ls: Nil | Ls(k{})) => return {list: ls, length: len(ls)})
 
 println(lenApply)
 
