@@ -180,7 +180,8 @@ showPos (P.SourcePos s ln cn) =
     "In file: " ++ s ++ ", at line: " ++ tail (dropWhile (/= ' ') (show ln)) ++ ", at colounm: " ++ tail (dropWhile (/= ' ') (show cn))
 
 data ErrorType =
-    UnmatchedType Annotation Annotation P.SourcePos
+    InDefinitiveReturn (Maybe String) P.SourcePos
+    | UnmatchedType Annotation Annotation P.SourcePos
     | UnmatchedConstraint Constraint Constraint P.SourcePos
     | ExpectedSomething String Annotation P.SourcePos
     | FieldNotFound Lhs Annotation P.SourcePos
@@ -203,6 +204,8 @@ data ErrorType =
     | NoTypeFound String P.SourcePos
 
 instance Show ErrorType where
+    show (InDefinitiveReturn Nothing pos) = "Function does not return\n" ++ showPos pos
+    show (InDefinitiveReturn (Just id) pos) = "Function " ++ id ++ " does not return\n" ++ showPos pos
     show (UnmatchedType a b pos) = "Can't match expected type " ++ show a ++ " with given type " ++ show b ++ "\n" ++ showPos pos
     show (NotOccuringTypeOpenFunction ann pos) = "The argument " ++ show ann ++ " does not even once occur in the whole method\n" ++ showPos pos
     show (NoDefinitionFound lhs pos) = show lhs ++ " not found in this scope\n" ++ showPos pos

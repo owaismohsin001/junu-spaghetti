@@ -17,8 +17,6 @@ import Data.Maybe
 import Data.Tuple
 import qualified Parser
 import Nodes
-import GHC.TypeLits (TypeError)
-
 
 insertAnnotation :: Lhs -> Finalizeable Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) Annotation
 insertAnnotation k v@(Finalizeable _ a) = do
@@ -767,6 +765,13 @@ liftLambda (DeclN (Assign lhs n pos):xs) =
 liftLambda (DeclN (Expr n):xs) = 
     putDecls $ getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (DeclN (Expr x) :) <$> liftLambda xs
 liftLambda (n:ns) = putDecls $ getRegister n >>= \(x, ds) -> (map DeclN ds ++) . (x :) <$> liftLambda ns
+
+definitivelyReturns :: [Node] -> Bool
+definitivelyReturns [] = False
+definitivelyReturns (IfStmnt _ ts es _:ns) = 
+    (definitivelyReturns ts && definitivelyReturns es) || definitivelyReturns ns
+definitivelyReturns (Return{}:_) = True
+definitivelyReturns (_:ns) = definitivelyReturns ns
 
 initIdentLhs :: Lhs -> Lhs
 initIdentLhs (LhsAccess acc p pos) = LhsIdentifer id pos where (Identifier id pos) = initIdent $ Access acc p pos
@@ -1573,43 +1578,45 @@ consistentTypesPass pass (Access st p pos) = do
             Right a -> return . Left $ UnsearchableType p a pos
             Left err -> return $ Left err
 consistentTypesPass p (FunctionDef args ret body pos) = 
-    case ret of
-        Just ret -> do
-            scope <- get
-            finalizeAnnotationState
-            (a, ((i, ans), mp)) <- get
-            mp <- getTypeMap
-            let program = Program body
-            let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True $ rigidizeTypeVariables mp ret):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just ans)) mp), mp))
-            put ans'
-            xs <- sequence <$> mapM (consistentTypesPass p) body
-            s <- getAnnotationState (LhsIdentifer "return" pos)
-            put scope
-            case s of
-                Right ret' -> case xs of
-                    Right _ -> return (sameTypes pos mp (makeFunAnnotation args $ unrigidizeTypeVariables mp ret) (makeFunAnnotation args $ unrigidizeTypeVariables mp ret'))
-                    Left err -> return . Left $ err
-                Left err -> return $ Left err
-        Nothing -> do
-            scope <- get
-            finalizeAnnotationState
-            (a, ((i, old_ans), mp)) <- get
-            let program = Program body
-            let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just old_ans)) mp), mp))
-            put ans
-            xs <- sequence <$> mapM (consistentTypesPass p) body
-            (_, ((i, new_ans), _)) <- get
-            case xs of
-                Right _ ->
-                    (\case
-                        Right ret -> case getAnnotation (LhsIdentifer "return" pos) new_ans of
-                            Right (Finalizeable _ ret') -> do
-                                typ <- consistentTypesPass p ret
-                                put scope
-                                return $ Right $ makeFunAnnotation args $ unrigidizeTypeVariables mp ret'
-                            Left err -> return $ Left err
-                        Left err -> return $ Left err) =<< firstInferrableReturn pos body
-                Left err -> return $ Left err
+    if definitivelyReturns body then
+        case ret of
+            Just ret -> do
+                scope <- get
+                finalizeAnnotationState
+                (a, ((i, ans), mp)) <- get
+                mp <- getTypeMap
+                let program = Program body
+                let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True $ rigidizeTypeVariables mp ret):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just ans)) mp), mp))
+                put ans'
+                xs <- sequence <$> mapM (consistentTypesPass p) body
+                s <- getAnnotationState (LhsIdentifer "return" pos)
+                put scope
+                case s of
+                    Right ret' -> case xs of
+                        Right _ -> return (sameTypes pos mp (makeFunAnnotation args $ unrigidizeTypeVariables mp ret) (makeFunAnnotation args $ unrigidizeTypeVariables mp ret'))
+                        Left err -> return . Left $ err
+                    Left err -> return $ Left err
+            Nothing -> do
+                scope <- get
+                finalizeAnnotationState
+                (a, ((i, old_ans), mp)) <- get
+                let program = Program body
+                let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just old_ans)) mp), mp))
+                put ans
+                xs <- sequence <$> mapM (consistentTypesPass p) body
+                (_, ((i, new_ans), _)) <- get
+                case xs of
+                    Right _ ->
+                        (\case
+                            Right ret -> case getAnnotation (LhsIdentifer "return" pos) new_ans of
+                                Right (Finalizeable _ ret') -> do
+                                    typ <- consistentTypesPass p ret
+                                    put scope
+                                    return $ Right $ makeFunAnnotation args $ unrigidizeTypeVariables mp ret'
+                                Left err -> return $ Left err
+                            Left err -> return $ Left err) =<< firstInferrableReturn pos body
+                    Left err -> return $ Left err
+    else return . Left $ InDefinitiveReturn Nothing pos
 consistentTypesPass p (Return n pos) = consistentTypesPass p n >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
     where lhs = LhsIdentifer "return" pos
 consistentTypesPass p (Call e args pos) =  (\case 
