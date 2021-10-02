@@ -30,16 +30,18 @@ xs = ins("ok", xs)
 xs = concatList(Ls({x: 8}, {}), xs)
 println(len(xs))
 
-let apply2 = (x: a{}, g: (b{}) -> c{}, f: (a{}) -> b{}) => {
-    return g(f(x))
+let compose2 = (g: (b{}) -> c{}, f: (a{}) -> b{}) => {
+    return (x: a{}) => g(f(x))
 }
 
-let lenApply = apply2(xs, (a: hasLength{.length: Int}) => {
+let lenApply = compose2((a: hasLength{.length: Int}) => {
     a.length = a.length*2
     return a
 }, (ls: Nil | Ls(k{})) => return {list: ls, length: len(ls)})
 
-println(lenApply)
+let lenApplied = lenApply(xs)
+
+println(lenApplied)
 
 if res notis Nil {
     let x = index(res, 3)

@@ -371,3 +371,29 @@ data ComparisionReturns a b =
 
 openMethodGp :: GenericPolicy
 openMethodGp = GenericPolicy{specifyGenericsAllowed = False}
+
+data TwoSets a = TwoSets (Set.Set a) (Set.Set a) deriving(Show)
+
+emptyTwoSets :: TwoSets a
+emptyTwoSets = TwoSets Set.empty Set.empty
+
+fromUnionLists :: (Ord a, Foldable f1, Foldable f2) => (f1 (Set.Set a), f2 (Set.Set a)) -> TwoSets a
+fromUnionLists (s1, s2) = TwoSets (Set.unions s1) (Set.unions s2)
+
+primary :: TwoSets a -> Set.Set a
+primary (TwoSets set _) = set
+
+secondary :: TwoSets a -> Set.Set a
+secondary (TwoSets set _) = set
+
+primaryMember :: Ord a => a -> TwoSets a -> Bool
+primaryMember k (TwoSets set _) = Set.member k set
+
+primaryIsNull :: TwoSets a -> Bool
+primaryIsNull (TwoSets set _) = Set.null set
+
+secondaryMember :: Ord a => a -> TwoSets a -> Bool
+secondaryMember k (TwoSets _ set) = Set.member k set
+
+secondaryIsNull :: TwoSets a -> Bool
+secondaryIsNull (TwoSets _ set) = Set.null set
