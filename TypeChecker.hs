@@ -1401,10 +1401,32 @@ sameTypes = sameTypesGeneric (True, False, False, Map.empty)
 getTypeMap :: State (a, (b, c)) c
 getTypeMap = gets (snd . snd)
 
-filterUnion pos usts f a b = case b of 
-    TypeUnion{} -> go pos usts f a b 
-    NewTypeInstanceAnnotation{} -> go pos usts f a b
-    _ -> if f a b then Left $ UnmatchedType a b pos else Right a
+findFromUserDefinedTypes pos id usts = case Map.lookup (LhsIdentifer id pos) usts of
+    Just x -> Right x
+    Nothing -> Left $ NoTypeFound id pos
+
+filterUnion :: SourcePos
+    -> UserDefinedTypes
+    -> (Annotation -> Annotation -> Bool)
+    -> Annotation
+    -> Annotation
+    -> Either ErrorType Annotation
+filterUnion pos usts f _a _b = 
+    let 
+        a = case _a of
+            Annotation id -> case findFromUserDefinedTypes pos id usts of 
+                Right x -> x
+                Left _ -> _a
+            _ -> _a
+        b = case _b of
+            Annotation id -> case findFromUserDefinedTypes pos id usts of 
+                Right x -> x
+                Left _ -> _b
+            _ -> _b
+    in case b of
+        TypeUnion{} -> go pos usts f a b 
+        NewTypeInstanceAnnotation{} -> go pos usts f a b
+        _ -> if f a b then Left $ UnmatchedType a b pos else Right a
     where
         go :: SourcePos -> UserDefinedTypes -> (Annotation -> Annotation -> Bool) -> Annotation -> Annotation -> Either ErrorType Annotation
         go pos usts f a (TypeUnion ts) =
@@ -1427,8 +1449,8 @@ filterUnion pos usts f a b = case b of
                     Left err -> Left err
         go pos usts f a b = if f a b then Right a else Left $ UnmatchedType a b pos
 
-excludeSameTypes pos usts a b = any isRight 
-    [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (TwoSets (collectGenenrics usts a) (collectGenenrics usts a)) Map.empty usts a b) $> b]
+excludeSameTypes pos usts a b = any isRight xs where
+    xs = [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (TwoSets (collectGenenrics usts a) (collectGenenrics usts a)) Map.empty usts a b) $> b]
 
 accessNewType givenArgs f fid@(LhsIdentifer id pos) =
     (\case
