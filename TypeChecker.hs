@@ -1185,86 +1185,101 @@ unionFrom a b x =
 mergedTypeConcrete = mergedType (True, False, False, Map.empty) comparisionEither
 mergedTypeConcreteEither pos mp a b = Right $ mergedTypeConcrete pos mp a b
 
-mergedType :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
-mergedType _ crt pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
-    if a == b then a else createUnion a b
-mergedType gs crt pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
-    if length as == length bs then FunctionAnnotation (init ls) (last ls)
-    else createUnion a b
-    where ls = zipWith (mergedType gs crt pos mp) (as ++ [ret1]) (bs ++ [ret2])
-mergedType gs crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
-    | id1 /= id2 = createUnion a b
-    | otherwise = mergedType gs crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
-mergedType gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
-    | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 ls
-    | e1 == e2 && length as1 < length as2 = case flip (mergedType gs crt pos mp) b <$> fullAnotationFromInstanceFree pos mp a of
-        Right a -> a
-        Left  _ -> createUnion a b
-    | otherwise = createUnion a b
-    where ls = zipWith (mergedType gs crt pos mp) as1 as2
-mergedType gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
-    | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then a else createUnion a b
-    | Map.size ps1 /= Map.size ps2 = createUnion a b
-    | isJust $ sequence ls = maybe (createUnion a b) StructAnnotation (sequence ls)
-    | otherwise = createUnion a b
-    where
-        ls = Map.mapWithKey (f ps1) ps2
-        f ps2 k v1 = 
-            case Map.lookup k ps2 of
-                Just v2
-                    -> case sameTypesGenericCrt gs crt pos mp v1 v2 of
-                        Right a -> Just a
-                        Left err -> Nothing
-                Nothing -> Nothing
-mergedType gs crt pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
-    case mapM_ (f mp $ Set.toList as) (Set.toList bs) of
-        Right () -> foldr1 (mergedType gs crt pos mp) (Set.toList bs)
-        Left _ -> case createUnion a b of
-            TypeUnion xs -> foldr1 (mergedType gs crt pos mp) $ Set.toList $ Set.map (mergeUnions xs) xs
-            a -> a
-    where
-        mergeUnions xs a = foldr1 (mergedType gs crt pos mp) $ filter (predicate a) nxs where nxs = Set.toList xs
-        predicate a b = isRight (sameTypesGenericCrt gs crt pos mp a b) || isRight (sameTypesGenericCrt gs crt pos mp b a)
-        f mp ps2 v1 = join $ getFirst a b pos $ map (\x -> success crt <$> sameTypesGenericCrt gs crt pos mp x v1) ps2
-mergedType gs crt pos mp a@(TypeUnion st) b = 
-    case fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGenericCrt gs crt pos mp x b) $ Set.toList st of
-        Right _ -> a
-        Left _ -> createUnion a b
-mergedType gs crt pos mp a b@(TypeUnion st) = mergedType gs crt pos mp b a
-mergedType gs crt pos mp (Annotation id1) b@(Annotation id2)
-    | id1 == id2 = b
-    | otherwise = case Map.lookup (LhsIdentifer id1 pos) mp of
-        Just a -> case Map.lookup (LhsIdentifer id2 pos) mp of
-            Just b -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
-mergedType gs crt pos mp (Annotation id) b = 
-    case Map.lookup (LhsIdentifer id pos) mp of
-        Just a -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
-mergedType gs crt pos mp b (Annotation id) = 
-    case Map.lookup (LhsIdentifer id pos) mp of
-        Just a -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
-mergedType tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
-    | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = createUnion a b
-    | otherwise = if id1 == id2 then unionFrom a b $ zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a else createUnion a b
-mergedType tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation _ acs) b = 
-    if sensitive then 
-        unionFrom a b $ mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs
-    else createUnion a b
-mergedType tgs@(_, sensitive, _, gs) crt pos mp b a@(GenericAnnotation _ acs) = 
-    if sensitive then 
-        unionFrom a b $ mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs *> success crt a
-    else createUnion a b
-mergedType (considerUnions, sensitive, leftGeneral, gs) crt pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
-    OpenFunctionAnnotation (init ls) (last ls) forType impls where 
-        ls = zipWith (mergedType (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2])
-        gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs 
-mergedType (considerUnions, sensitive, leftGeneral, gs) crt pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
-    FunctionAnnotation (init ls) (last ls) where
-        ls = zipWith (mergedType (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
-        gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
-mergedType gs crt pos mp a@(RigidAnnotation id1 _) b@(RigidAnnotation id2 _) 
-    | id1 == id2 = a
-    | otherwise = createUnion a b
-mergedType _ crt pos _ a b = createUnion a b
+mergedType :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
+mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
+
+    simplify :: Annotation -> Annotation
+    simplify (TypeUnion ts) = TypeUnion . Set.fromList . map (foldr1 (mergedType gs crt pos mp)) . groupBy2 $ Set.toList ts where
+        groupBy2 :: [Annotation] -> [[Annotation]]
+        groupBy2 = go [] where
+            go acc [] = acc
+            go acc (h:t) =
+                let (hs, nohs) = partition (hasSameFunctor h) t
+                in go ((h:hs):acc) nohs
+        hasSameFunctor (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2
+        hasSameFunctor a b = sameTypesBool pos mp a b
+    simplify a = a
+
+    go :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
+    go _ crt pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
+        if a == b then a else createUnion a b
+    go gs crt pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
+        if length as == length bs then FunctionAnnotation (init ls) (last ls)
+        else createUnion a b
+        where ls = zipWith (mergedType gs crt pos mp) (as ++ [ret1]) (bs ++ [ret2])
+    go gs crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+        | id1 /= id2 = createUnion a b
+        | otherwise = mergedType gs crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
+    go gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
+        | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 ls
+        | e1 == e2 && length as1 < length as2 = case flip (mergedType gs crt pos mp) b <$> fullAnotationFromInstanceFree pos mp a of
+            Right a -> a
+            Left  _ -> createUnion a b
+        | otherwise = createUnion a b
+        where ls = zipWith (mergedType gs crt pos mp) as1 as2
+    go gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
+        | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then a else createUnion a b
+        | Map.size ps1 /= Map.size ps2 = createUnion a b
+        | isJust $ sequence ls = maybe (createUnion a b) StructAnnotation (sequence ls)
+        | otherwise = createUnion a b
+        where
+            ls = Map.mapWithKey (f ps1) ps2
+            f ps2 k v1 = 
+                case Map.lookup k ps2 of
+                    Just v2
+                        -> case sameTypesGenericCrt gs crt pos mp v1 v2 of
+                            Right a -> Just a
+                            Left err -> Nothing
+                    Nothing -> Nothing
+    go gs crt pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
+        case mapM_ (f mp $ Set.toList as) (Set.toList bs) of
+            Right () -> foldr1 (mergedType gs crt pos mp) (Set.toList bs)
+            Left _ -> case createUnion a b of
+                TypeUnion xs -> foldr1 (mergedType gs crt pos mp) $ Set.toList $ Set.map (mergeUnions xs) xs
+                a -> a
+        where
+            mergeUnions xs a = foldr1 (mergedType gs crt pos mp) $ filter (predicate a) nxs where nxs = Set.toList xs
+            predicate a b = isRight (sameTypesGenericCrt gs crt pos mp a b) || isRight (sameTypesGenericCrt gs crt pos mp b a)
+            f mp ps2 v1 = join $ getFirst a b pos $ map (\x -> success crt <$> sameTypesGenericCrt gs crt pos mp x v1) ps2
+    go gs crt pos mp a@(TypeUnion st) b = 
+        case fromJust $ getFirst a b pos $ map (\x -> Just $ sameTypesGenericCrt gs crt pos mp x b) $ Set.toList st of
+            Right _ -> a
+            Left _ -> createUnion a b
+    go gs crt pos mp a b@(TypeUnion st) = mergedType gs crt pos mp b a
+    go gs crt pos mp (Annotation id1) b@(Annotation id2)
+        | id1 == id2 = b
+        | otherwise = case Map.lookup (LhsIdentifer id1 pos) mp of
+            Just a -> case Map.lookup (LhsIdentifer id2 pos) mp of
+                Just b -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
+    go gs crt pos mp (Annotation id) b = 
+        case Map.lookup (LhsIdentifer id pos) mp of
+            Just a -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
+    go gs crt pos mp b (Annotation id) = 
+        case Map.lookup (LhsIdentifer id pos) mp of
+            Just a -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
+    go tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
+        | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = createUnion a b
+        | otherwise = if id1 == id2 then unionFrom a b $ zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a else createUnion a b
+    go tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation _ acs) b = 
+        if sensitive then 
+            unionFrom a b $ mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs
+        else createUnion a b
+    go tgs@(_, sensitive, _, gs) crt pos mp b a@(GenericAnnotation _ acs) = 
+        if sensitive then 
+            unionFrom a b $ mapM (matchConstraint tgs crt pos mp (AnnotationConstraint b)) acs *> success crt a
+        else createUnion a b
+    go (considerUnions, sensitive, leftGeneral, gs) crt pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
+        OpenFunctionAnnotation (init ls) (last ls) forType impls where 
+            ls = zipWith (mergedType (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2])
+            gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs 
+    go (considerUnions, sensitive, leftGeneral, gs) crt pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
+        FunctionAnnotation (init ls) (last ls) where
+            ls = zipWith (mergedType (considerUnions, sensitive, leftGeneral, gs') crt pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
+            gs' = genericsFromList (anns1 ++ [ret1]) `Map.union` gs
+    go gs crt pos mp a@(RigidAnnotation id1 _) b@(RigidAnnotation id2 _) 
+        | id1 == id2 = a
+        | otherwise = createUnion a b
+    go _ crt pos _ a b = createUnion a b
 
 sameTypesGenericCrt :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation
 sameTypesGenericCrt _ crt pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
