@@ -1189,15 +1189,20 @@ mergedType :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionRetu
 mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
 
     simplify :: Annotation -> Annotation
-    simplify (TypeUnion ts) = TypeUnion . Set.fromList . map (foldr1 (mergedType gs crt pos mp)) . groupBy2 $ Set.toList ts where
+    simplify (TypeUnion ts) = case map (foldr1 (mergedType gs crt pos mp)) . groupBy2 $ Set.toList ts of
+        [] -> error "This should not be possible, simplification should return at least one value. Please report." 
+        [a] -> a
+        xs -> TypeUnion $ Set.fromList xs
+        where
         groupBy2 :: [Annotation] -> [[Annotation]]
         groupBy2 = go [] where
             go acc [] = acc
             go acc (h:t) =
-                let (hs, nohs) = partition (hasSameFunctor h) t
+                let (hs, nohs) = partition (groupable h) t
                 in go ((h:hs):acc) nohs
-        hasSameFunctor (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2
-        hasSameFunctor a b = sameTypesBool pos mp a b
+        groupable (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2
+        groupable (FunctionAnnotation anns1 ret1) (FunctionAnnotation anns2 ret2) = length anns1 == length anns2
+        groupable a b = sameTypesBool pos mp a b
     simplify a = a
 
     go :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
