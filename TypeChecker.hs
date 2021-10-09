@@ -17,16 +17,17 @@ import Data.Maybe
 import Data.Tuple
 import qualified Parser
 import Nodes
+import Nodes (Annotation(Annotation))
 
 insertAnnotation :: Lhs -> Finalizeable Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) Annotation
 insertAnnotation k v@(Finalizeable _ a) = do
-    (a, ((i, Annotations b o), m)) <- get
-    put (a, ((i, Annotations (Map.insert k v b) o), m))
+    (a, ((i, Annotations (b, s) o), m)) <- get
+    put (a, ((i, Annotations (Map.insert k v b, s) o), m))
     return a
 
 getAnnotation :: Show a => Lhs -> Annotations a -> Result ErrorType a
 getAnnotation k@(LhsIdentifer _ pos) (Annotations anns rest) =
-    case Map.lookup k anns of
+    case Map.lookup k $ fst anns of
         Just v -> Right v
         Nothing -> 
             case rest of
@@ -35,17 +36,17 @@ getAnnotation k@(LhsIdentifer _ pos) (Annotations anns rest) =
 getAnnotation k a = error $ "Unexpected args " ++ show (k, a)
 
 modifyAnnotation :: UserDefinedTypes -> Lhs -> Annotation -> Annotations (Finalizeable Annotation) -> Result ErrorType (Annotations (Finalizeable Annotation))
-modifyAnnotation usts k@(LhsIdentifer _ pos) ann (Annotations anns rest) =
+modifyAnnotation usts k@(LhsIdentifer _ pos) ann (Annotations (anns, set) rest) =
     case Map.lookup k anns of
-        Just (Finalizeable False v) -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns) rest
+        Just (Finalizeable False v) -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns, set) rest
         Just (Finalizeable True v) -> 
             case sameTypesNoUnionSpec pos usts ann v of
-                Right _ -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns) rest
+                Right _ -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns, set) rest
                 Left err -> Left $ IrreconcilableAnnotatatedType k ann v pos
         Nothing -> 
             case rest of
                 Just rs -> case modifyAnnotation usts k ann rs of
-                    Right a -> Right $ Annotations anns (Just a)
+                    Right a -> Right $ Annotations (anns, set) (Just a)
                     Left err -> Left err
                 Nothing -> Left $ NoDefinitionFound k pos
 modifyAnnotation _ k ann as = error $ "Unexpected args " ++ show (k, ann, as)
@@ -58,11 +59,11 @@ modifyAnnotationState k@(LhsIdentifer _ pos) v = do
         Left err -> return $ Left err
 modifyAnnotationState k v = error $ "Unexpected args " ++ show (k, v)
 
-finalizeAnnotations :: Annotations (Finalizeable a) -> Annotations (Finalizeable a)
-finalizeAnnotations (Annotations anns Nothing) = Annotations (Map.map finalize anns) Nothing
-finalizeAnnotations (Annotations anns (Just rest)) = Annotations (Map.map finalize anns) (Just $ finalizeAnnotations rest)
+finalizeAnnotations :: Ord a => Annotations (Finalizeable a) -> Annotations (Finalizeable a)
+finalizeAnnotations (Annotations (anns, set) Nothing) = Annotations (Map.map finalize anns, set) Nothing
+finalizeAnnotations (Annotations (anns, set) (Just rest)) = Annotations (Map.map finalize anns, Set.map finalize set) (Just $ finalizeAnnotations rest)
 
-finalizeAnnotationState :: AnnotationState (Annotations (Finalizeable a)) ()
+finalizeAnnotationState :: Ord a => AnnotationState (Annotations (Finalizeable a)) ()
 finalizeAnnotationState = modify (\(a, ((i, anns), b)) -> (a, ((i, finalizeAnnotations anns), b)))
 
 getAnnotationState :: Show a => Lhs -> AnnotationState (Annotations (Finalizeable a)) (Result ErrorType a)
@@ -104,7 +105,7 @@ unrigidizeTypeVariables usts (TypeUnion ts) = TypeUnion $ Set.map (unrigidizeTyp
 unrigidizeTypeVariables usts OpenFunctionAnnotation{} = error "Can't use rigidizeVariables with open functions"
 
 pushScope :: Show a => AnnotationState (Annotations a) ()
-pushScope = (\(a, ((i, mp), b)) -> put (a, ((i, Annotations Map.empty $ Just mp), b))) =<< get
+pushScope = (\(a, ((i, mp), b)) -> put (a, ((i, Annotations (Map.empty, Set.empty) $ Just mp), b))) =<< get
 
 popScope :: Show a => AnnotationState (Annotations a) ()
 popScope = (\(a, ((i, Annotations _ (Just mp)), b)) -> put (a, ((i, mp), b))) =<< get
@@ -143,6 +144,9 @@ getTypeStateFrom f pos = do
     case res of
         Right res -> getTypeState res pos
         Left err -> return $ Left err
+
+lookupInTypes ann (Annotations (_, set) (Just rest)) = if Set.member ann set then True else lookupInTypes ann rest
+lookupInTypes ann (Annotations (_, set) Nothing) = Set.member ann set
 
 firstInferrableReturn :: P.SourcePos -> [Node] -> AnnotationState (Annotations (Finalizeable Annotation)) (Either ErrorType Node)
 firstInferrableReturn pos [] = return . Left $ UnInferrableType Nothing pos
@@ -246,12 +250,13 @@ isSecondaryDefMember usts a defs = rigidizeTypeVariables usts a `secondaryMember
 substituteVariablesOptFilter :: Bool
     -> SourcePos
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> Map.Map Annotation (Set.Set Annotation)
     -> Map.Map Annotation Annotation
     -> UserDefinedTypes
     -> Annotation
     -> Either ErrorType Annotation
-substituteVariablesOptFilter pred pos defs rels mp usts n = evalState (go pred rels mp n) Set.empty where
+substituteVariablesOptFilter pred pos defs anns rels mp usts n = evalState (go pred rels mp n) Set.empty where
     goConstraints :: Bool
         -> Map.Map Annotation (Set.Set Annotation)
         -> Map.Map Annotation Annotation
@@ -272,7 +277,7 @@ substituteVariablesOptFilter pred pos defs rels mp usts n = evalState (go pred r
         where 
             f gs x = case firstPreferablyDefinedRelation pos usts gs defs mp rels x of
                 Right a -> Right a
-                Left _ -> Right x
+                Left err -> if lookupInTypes x anns then Right x else Left err
             g = join <$> (mapM (goConstraints pred rels mp) cns >>= (\case
                 Left err -> return $ Left err
                 Right x -> get >>= \gs -> return $ Right $ (f gs . GenericAnnotation id) x) . sequence)
@@ -348,35 +353,36 @@ getLookupTypeIfAvailable k = do
         Just k -> getLookupTypeIfAvailable k
         Nothing -> return k
 
-changeType :: P.SourcePos -> TwoSets Annotation -> Annotation -> Annotation -> SubstituteState (Either ErrorType ())
-changeType pos defs k v = do
+changeType :: P.SourcePos -> TwoSets Annotation -> Annotations Annotation -> Annotation -> Annotation -> SubstituteState (Either ErrorType ())
+changeType pos defs anns k v = do
     (a, ((rel, mp), usts)) <- get
-    case substituteVariables pos defs rel mp usts v of
+    case substituteVariables pos defs anns rel mp usts v of
         Right sub -> put (a, ((rel, Map.insert k sub mp), usts)) $> Right ()
         Left err -> return $ Left err
 
-reshuffleTypes :: P.SourcePos -> TwoSets Annotation -> SubstituteState ()
-reshuffleTypes pos defs = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeType pos defs) mp) =<< get
+reshuffleTypes :: P.SourcePos -> TwoSets Annotation -> Annotations Annotation -> SubstituteState ()
+reshuffleTypes pos defs anns = (\(_, ((_, mp), _)) -> sequence_ $ Map.mapWithKey (changeType pos defs anns) mp) =<< get
 
 sameTypesNoUnionSpec = sameTypesGeneric (False, True, False, Map.empty)
 
 addTypeVariable :: SourcePos
     -> (Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation)
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> Maybe (SubstituteState (Either ErrorType ()))
     -> Annotation
     -> Annotation
     -> SubstituteState (Either ErrorType Annotation)
-addTypeVariable pos f defs stmnt k v = do
+addTypeVariable pos f defs anns stmnt k v = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup k mp of
         Nothing -> addToMap k v
         Just a -> if collectGenenricsNoRigids usts a == Set.empty && collectGenenricsNoRigids usts v == Set.empty then case f k pos usts a v of
                 Right v -> addToMap k v
                 Left err -> lastResort a rs mp usts (Left err)
-            else specifyInternal pos stmnt f defs a v >>= \case
+            else specifyInternal pos stmnt f defs anns a v >>= \case
                 Right v -> addToMap k v
-                Left _ -> specifyInternal pos stmnt f defs v a >>= \case
+                Left _ -> specifyInternal pos stmnt f defs anns v a >>= \case
                     Right v -> addToMap k v
                     Left err -> lastResort a rs mp usts (Left err)
     where
@@ -389,8 +395,8 @@ addTypeVariable pos f defs stmnt k v = do
                 return . Left $ InfiniteTypeError k v pos 
             else do
                 put (a, ((rs, Map.insert k v mp), usts))
-                fromMaybe (updateRelations pos stmnt f defs) stmnt >>= \case
-                    Right _ -> reshuffleTypes pos defs $> Right v
+                fromMaybe (updateRelations pos stmnt f defs anns) stmnt >>= \case
+                    Right _ -> reshuffleTypes pos defs anns $> Right v
                     Left err -> return . Left $ UnificationError k err
 
         lastResort a rs mp usts x = if a == AnnotationLiteral "_" then addToMap k v else 
@@ -408,16 +414,17 @@ updateSingleRelation :: SourcePos
         -> Annotation
         -> Either ErrorType Annotation)
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> Annotation
     -> SubstituteState (Either ErrorType ())
-updateSingleRelation pos stmnt fa defs r = do
+updateSingleRelation pos stmnt fa defs anns r = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup r rs of
         Just rl -> do
             (\case 
                 Right _ -> do
                     put (a, ((Map.insert r (getAllRelationsInvolving r rs) rs, mp), usts))
-                    maybe (return $ Right ()) (fmap ($> ()) . specifyInternal pos (Just . return $ Right ()) fa defs r) fnv
+                    maybe (return $ Right ()) (fmap ($> ()) . specifyInternal pos (Just . return $ Right ()) fa defs anns r) fnv
                 Left err -> return $ Left err) . sequence =<< mapM (uncurry f) mls'
             where 
             m = Map.filterWithKey (\k _ -> k `Set.member` rl) mp
@@ -426,7 +433,7 @@ updateSingleRelation pos stmnt fa defs r = do
             mls' = case fnv of 
                 Just a -> map (\(k, _) -> (k, a)) mls
                 Nothing -> []
-            f = addTypeVariable pos fa defs (Just . return $ Right ())
+            f = addTypeVariable pos fa defs anns (Just . return $ Right ())
             firstNonUnderscore [] = Nothing 
             firstNonUnderscore ((_, AnnotationLiteral "_"):xs) = firstNonUnderscore xs
             firstNonUnderscore ((_, ann):xs) = Just ann
@@ -438,10 +445,11 @@ updateRelations :: P.SourcePos
     -> Maybe (SubstituteState (Either ErrorType ()))
     -> (Annotation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation) 
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> SubstituteState (Either ErrorType ())
-updateRelations pos f stmnt defs = do
+updateRelations pos f stmnt defs anns = do
     (a, ((rs, mp), usts)) <- get
-    x <- mapM (updateSingleRelation pos f stmnt defs) $ Map.keys rs
+    x <- mapM (updateSingleRelation pos f stmnt defs anns) $ Map.keys rs
     case sequence x of
         Right _ -> return $ Right ()
         Left err -> return $ Left err
@@ -450,183 +458,186 @@ addRelation :: SourcePos
     -> Maybe (SubstituteState (Either ErrorType ()))
     -> (Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation)
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> Annotation
     -> Annotation
     -> SubstituteState (Either a ())
-addRelation pos stmnt f defs r nv = do
+addRelation pos stmnt f defs anns r nv = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup r rs of
         Just rl -> do
             let nrs = Map.insert r (rl `Set.union` Set.singleton nv) rs
             put (a, ((nrs, mp), usts))
-            Right () <$ updateSingleRelation pos stmnt f defs r
+            Right () <$ updateSingleRelation pos stmnt f defs anns r
         Nothing -> do
             let nrs = Map.insert r (Set.singleton nv) rs
             put (a, ((nrs, mp), usts))
-            Right () <$ updateSingleRelation pos stmnt f defs r
+            Right () <$ updateSingleRelation pos stmnt f defs anns r
 
 applyConstraintState :: SourcePos
     -> Maybe (SubstituteState (Either ErrorType ()))
     -> (Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation) 
-    -> TwoSets Annotation -> Annotation -> Constraint -> SubstituteState (Either ErrorType Annotation)
-applyConstraintState pos stmnt f defs ann (ConstraintHas lhs cn) = 
+    -> TwoSets Annotation -> Annotations Annotation ->  Annotation -> 
+        Constraint -> SubstituteState (Either ErrorType Annotation)
+applyConstraintState pos stmnt f defs anns ann (ConstraintHas lhs cn) = 
     do 
         mp <- getTypeMap
         case ann of
             StructAnnotation mp -> 
                 case lhs `Map.lookup` mp of
-                    Just ann -> applyConstraintState pos stmnt f defs ann cn
+                    Just ann -> applyConstraintState pos stmnt f defs anns ann cn
                     Nothing -> return . Left $ FieldNotFound lhs ann pos
             Annotation id ->
                 case LhsIdentifer id pos `Map.lookup` mp of
-                    Just ann -> applyConstraintState pos stmnt f defs ann cn
+                    Just ann -> applyConstraintState pos stmnt f defs anns ann cn
                     Nothing -> return . Left $ NoTypeFound id pos
             NewTypeInstanceAnnotation id args -> 
-                        accessNewType args
+                        accessNewType anns args
                         (\(NewTypeAnnotation _ _ ps) -> 
                             case Map.lookup lhs ps of
-                                Just ann -> applyConstraintState pos stmnt f defs ann cn
+                                Just ann -> applyConstraintState pos stmnt f defs anns ann cn
                                 Nothing -> return . Left $ FieldNotFound lhs ann pos
                             ) 
                         (LhsIdentifer id pos)
             g@(GenericAnnotation id cns) -> case genericHas pos g lhs cns of
-                Right ann -> applyConstraintState pos stmnt f defs ann cn
+                Right ann -> applyConstraintState pos stmnt f defs anns ann cn
                 Left err -> return $ Left err
             g@(RigidAnnotation id cns) -> case genericHas pos g lhs cns of
-                Right ann -> applyConstraintState pos stmnt f defs ann cn
+                Right ann -> applyConstraintState pos stmnt f defs anns ann cn
                 Left err -> return $ Left err
-            t@TypeUnion{} -> typeUnionHas pos stmnt f defs t cn >>= \case
-                Right ann -> applyConstraintState pos stmnt f defs ann cn
+            t@TypeUnion{} -> typeUnionHas pos stmnt f defs anns t cn >>= \case
+                Right ann -> applyConstraintState pos stmnt f defs anns ann cn
                 Left err -> return $ Left err
             a -> return . Left $ UnsearchableType lhs a pos
-applyConstraintState pos stmnt f defs ann2 (AnnotationConstraint ann1) = do
-    a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos stmnt f defs ann2 ann1 *> addRelation pos stmnt f defs ann1 ann2 $> Right ann1 else addTypeVariable pos f defs stmnt ann1 ann2
+applyConstraintState pos stmnt f defs anns ann2 (AnnotationConstraint ann1) = do
+    a <- if isGenericAnnotation ann2 && isGenericAnnotation ann1 then addRelation pos stmnt f defs anns ann2 ann1 *> addRelation pos stmnt f defs anns ann1 ann2 $> Right ann1 else addTypeVariable pos f defs anns stmnt ann1 ann2
     case a of
-        Right _ -> specifyInternal pos stmnt f defs ann1 ann2
+        Right _ -> specifyInternal pos stmnt f defs anns ann1 ann2
         Left err -> return $ Left err
 
-typeUnionHas pos stmnt f defs (TypeUnion st) cn = (\case
+typeUnionHas pos stmnt f defs anns (TypeUnion st) cn = (\case
                 Left err -> return $ Left err
                 Right stl -> do
-                    a <- sequence <$> mapM (flip (applyConstraintState pos stmnt f defs) cn) stl
+                    a <- sequence <$> mapM (flip (applyConstraintState pos stmnt f defs anns) cn) stl
                     case a of
                         Right (x:_) -> return $ Right x
                         Left err -> return $ Left err
-                ) . sequence =<< mapM (flip (applyConstraintState pos stmnt f defs) cn) stl where stl = Set.toList st
-typeUnionHas _ _ _ _ t _ = error $ "typeUnionHas can only be called with type union, not " ++ show t
+                ) . sequence =<< mapM (flip (applyConstraintState pos stmnt f defs anns) cn) stl where stl = Set.toList st
+typeUnionHas _ _ _ _ _ t _ = error $ "typeUnionHas can only be called with type union, not " ++ show t
 
 isValidNewTypeInstance = undefined
 
-isGeneralizedInstance pos ann@(NewTypeInstanceAnnotation id1 anns1) = do
-    a <- fullAnotationFromInstance pos ann
+isGeneralizedInstance pos anns ann@(NewTypeInstanceAnnotation id1 anns1) = do
+    a <- fullAnotationFromInstance pos anns ann
     case a of
         Right (NewTypeAnnotation id2 anns2 _) -> return $ id1 == id2 && length anns1 < length anns2
         Right _ -> return False
         Left err -> return False
-isGeneralizedInstance a b = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ "]"
+isGeneralizedInstance _ a b = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ "]"
 
-isGeneralizedInstanceFree :: SourcePos -> Annotation -> Map.Map Lhs Annotation -> Bool
-isGeneralizedInstanceFree pos ann@(NewTypeInstanceAnnotation id1 anns1) mp =
-    case fullAnotationFromInstanceFree pos mp ann of
+isGeneralizedInstanceFree :: SourcePos -> Annotations Annotation -> Annotation -> Map.Map Lhs Annotation -> Bool
+isGeneralizedInstanceFree pos anns ann@(NewTypeInstanceAnnotation id1 anns1) mp =
+    case fullAnotationFromInstanceFree pos anns mp ann of
         Right (NewTypeAnnotation id2 anns2 _) -> id1 == id2 && length anns1 < length anns2
         Right _ -> False
         Left err -> False
-isGeneralizedInstanceFree a b c = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ ", " ++ show c ++ "]"
+isGeneralizedInstanceFree _ a b c = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ ", " ++ show c ++ "]"
 
 specifyInternal :: SourcePos
     -> Maybe (SubstituteState (Either ErrorType ()))
     -> (Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation)
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> Annotation
     -> Annotation
     -> SubstituteState (Either ErrorType Annotation)
-specifyInternal pos stmnt f defs a@AnnotationLiteral{} b@AnnotationLiteral{} = (\mp -> return $ sameTypes pos mp a b *> Right a) =<< gets (snd . snd)
-specifyInternal pos stmnt f defs a@(RigidAnnotation id1 cns1) b@(RigidAnnotation id2 cns2) 
-    | id1 == id2 = (b <$) <$> (sequence <$> mapM (applyConstraintState pos stmnt f defs b) cns1)
+specifyInternal pos stmnt f defs anns a@AnnotationLiteral{} b@AnnotationLiteral{} = (\mp -> return $ sameTypes pos mp a b *> Right a) =<< gets (snd . snd)
+specifyInternal pos stmnt f defs anns a@(RigidAnnotation id1 cns1) b@(RigidAnnotation id2 cns2) 
+    | id1 == id2 = (b <$) <$> (sequence <$> mapM (applyConstraintState pos stmnt f defs anns b) cns1)
     | otherwise = return . Left $ UnmatchedType a b pos
-specifyInternal pos stmnt f defs a@(GenericAnnotation id cns) b@(AnnotationLiteral ann) = do
+specifyInternal pos stmnt f defs anns a@(GenericAnnotation id cns) b@(AnnotationLiteral ann) = do
     mp <- getTypeMap
-    ann <- addTypeVariable pos f defs stmnt a b
+    ann <- addTypeVariable pos f defs anns stmnt a b
     case ann of
         Right ann ->
             (\case
                 Right _ -> return $ Right b
-                Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos stmnt f defs ann) cns
+                Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos stmnt f defs anns ann) cns
         Left err -> return $ Left err
-specifyInternal pos stmnt f defs a@(GenericAnnotation id cns) b@(Annotation ann) = do
+specifyInternal pos stmnt f defs anns a@(GenericAnnotation id cns) b@(Annotation ann) = do
     anno <- getTypeState b pos
     case anno of
-        Right ann -> specifyInternal pos stmnt f defs a ann
+        Right ann -> specifyInternal pos stmnt f defs anns a ann
         Left err -> return $ Left err
-specifyInternal pos stmnt f defs a@(Annotation id1) b@(Annotation id2) 
+specifyInternal pos stmnt f defs anns a@(Annotation id1) b@(Annotation id2) 
     | id1 == id2 = return $ Right b
     | otherwise = (\mp -> case Map.lookup (LhsIdentifer id1 pos) mp of 
         Just a' -> case Map.lookup (LhsIdentifer id2 pos) mp of
-            Just b' -> specifyInternal pos stmnt f defs a' b'
+            Just b' -> specifyInternal pos stmnt f defs anns a' b'
             Nothing -> return . Left $ NoTypeFound id2 pos
         Nothing -> return . Left $ NoTypeFound id1 pos) =<< getTypeMap
-specifyInternal pos stmnt f defs a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
-    Just a' -> specifyInternal pos stmnt f defs a' b
+specifyInternal pos stmnt f defs anns a@(Annotation id) b = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
+    Just a' -> specifyInternal pos stmnt f defs anns a' b
     Nothing -> return . Left $ NoTypeFound id pos) =<< getTypeMap
-specifyInternal pos stmnt f defs a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
-    Just b' -> specifyInternal pos stmnt f defs a b'
+specifyInternal pos stmnt f defs anns a b@(Annotation id) = (\mp -> case Map.lookup (LhsIdentifer id pos) mp of 
+    Just b' -> specifyInternal pos stmnt f defs anns a b'
     Nothing -> return . Left $ NoTypeFound id pos) =<< getTypeMap
-specifyInternal pos stmnt f defs a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = do
+specifyInternal pos stmnt f defs anns a@(GenericAnnotation id1 cns1) b@(GenericAnnotation id2 cns2) = do
     (\case
-        Right _ -> addRelation pos stmnt f defs b a *> addRelation pos stmnt f defs a b $> Right b
+        Right _ -> addRelation pos stmnt f defs anns b a *> addRelation pos stmnt f defs anns a b $> Right b
         Left err -> return $ Left err
-        ) . sequence =<< mapM (applyConstraintState pos stmnt f defs b) cns1
-specifyInternal pos stmnt f defs a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
+        ) . sequence =<< mapM (applyConstraintState pos stmnt f defs anns b) cns1
+specifyInternal pos stmnt f defs anns a@(GenericAnnotation id cns) b@(TypeUnion st) = (\case
     Right _ -> do
-        a <- addTypeVariable pos f defs stmnt a b
+        a <- addTypeVariable pos f defs anns stmnt a b
         case a of
             Right _ -> return $ Right b
             Left err -> return $ Left err
-    Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos stmnt f defs b) cns
-specifyInternal pos stmnt f defs a@(StructAnnotation ms1) b@(StructAnnotation ms2)
+    Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos stmnt f defs anns b) cns
+specifyInternal pos stmnt f defs anns a@(StructAnnotation ms1) b@(StructAnnotation ms2)
     | Map.size ms1 /= Map.size ms2 = return . Left $ UnmatchedType a b pos
     | Map.null ms1 && Map.null ms2 = return $ Right b
     | Set.fromList (Map.keys ms1) == Set.fromList (Map.keys ms2) = (\case
         Right _ -> return $ Right b
-        Left err -> return $ Left err) . sequence =<< zipWithM (specifyInternal pos stmnt f defs) (Map.elems ms1) (Map.elems ms2)
-specifyInternal pos stmnt f defs a@(OpenFunctionAnnotation oargs oret _ _) b@(FunctionAnnotation args ret) 
+        Left err -> return $ Left err) . sequence =<< zipWithM (specifyInternal pos stmnt f defs anns) (Map.elems ms1) (Map.elems ms2)
+specifyInternal pos stmnt f defs anns a@(OpenFunctionAnnotation oargs oret _ _) b@(FunctionAnnotation args ret) 
     | length args /= length oargs = return . Left $ CallError oargs args pos
     | otherwise = (\case
         Right _ -> return $ Right b
         Left err -> return $ Left err
-        ) . sequence =<< zipWithM (specifyInternal pos stmnt f defs) (oargs ++ [oret]) (args ++ [ret])
-specifyInternal pos stmnt f defs a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation args ret)
+        ) . sequence =<< zipWithM (specifyInternal pos stmnt f defs anns) (oargs ++ [oret]) (args ++ [ret])
+specifyInternal pos stmnt f defs anns a@(FunctionAnnotation oargs oret) b@(FunctionAnnotation args ret)
     | length args /= length oargs = return . Left $ CallError oargs args pos
     | otherwise = (\case
         Right _ -> return $ Right b
         Left err -> return $ Left err
-        ) . sequence =<< zipWithM (specifyInternal pos stmnt f defs) (oargs ++ [oret]) (args ++ [ret])
-specifyInternal pos stmnt f defs a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+        ) . sequence =<< zipWithM (specifyInternal pos stmnt f defs anns) (oargs ++ [oret]) (args ++ [ret])
+specifyInternal pos stmnt f defs anns a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = return . Left $ UnmatchedType a b pos
     | otherwise = do
         (_, ((_, mp), usts)) <- get
-        specifyInternal pos stmnt (const mergedTypeConcreteEither) defs (NewTypeInstanceAnnotation id1 anns1) b
+        specifyInternal pos stmnt (const mergedTypeConcreteEither) defs anns (NewTypeInstanceAnnotation id1 anns1) b
         where 
             fx rels = do
                 mapM_ sequence_ <$> sequence (Map.map sequence <$> Map.mapWithKey (\k v -> map (\a -> 
-                    addRelation pos stmnt f defs k a >>= \case
-                        Right _ -> addRelation pos stmnt f defs a k
+                    addRelation pos stmnt f defs anns k a >>= \case
+                        Right _ -> addRelation pos stmnt f defs anns a k
                         Left err -> return $ Left err) v) $ Map.map Set.toList rels)
-specifyInternal pos stmnt f defs a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2) 
+specifyInternal pos stmnt f defs anns a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeInstanceAnnotation id2 anns2) 
     | id1 /= id2 = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
     | otherwise  = do
-        pred <- isGeneralizedInstance pos a
+        pred <- isGeneralizedInstance pos anns a
         if pred then do
-            x <- fullAnotationFromInstance pos a
+            x <- fullAnotationFromInstance pos anns a
             case x of
-                Right ntp@(NewTypeAnnotation id anns mp) -> specifyInternal pos stmnt f defs ntp b
+                Right ntp@(NewTypeAnnotation id _ mp) -> specifyInternal pos stmnt f defs anns ntp b
                 Right _ -> return . Left $ NoTypeFound id1 pos
                 Left err -> return $ Left err
         else (\case
                 Right _ -> return $ Right b
                 Left err -> return $ Left err
-                ) . sequence =<< zipWithM (specifyInternal pos stmnt f defs) anns1 anns2
-specifyInternal pos stmnt fa defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
+                ) . sequence =<< zipWithM (specifyInternal pos stmnt f defs anns) anns1 anns2
+specifyInternal pos stmnt fa defs anns a@(TypeUnion _as) b@(TypeUnion _bs) = do
     mp <- getTypeMap
     case (foldr1 (mergedTypeConcrete pos mp) _as, foldr1 (mergedTypeConcrete pos mp) _bs) of
         (TypeUnion as, TypeUnion bs) -> do
@@ -639,11 +650,11 @@ specifyInternal pos stmnt fa defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
                         Right _ -> return $ Right b
                         Left err -> if Set.size as == Set.size bs && Set.null (collectGenenrics mp a) then return $ Left err 
                                 else distinctUnion mp err (Set.toList $ collectGenenrics mp a)
-        (a, b) -> specifyInternal pos stmnt fa defs a b
+        (a, b) -> specifyInternal pos stmnt fa defs anns a b
     where
-        f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos stmnt (const sameTypes) defs x v1) ps2
+        f mp ps2 v1 = getFirst a b pos $ map (\x -> specifyInternal pos stmnt (const sameTypes) defs anns x v1) ps2
         typeUnionList (TypeUnion xs) action = action $ Set.toList xs
-        typeUnionList a action = specifyInternal pos stmnt (const sameTypes) defs a b
+        typeUnionList a action = specifyInternal pos stmnt (const sameTypes) defs anns a b
         g mp ps2 v1 = map (\x -> (specifyInternal pos stmnt (const sameTypes) defs x v1, x)) ps2
         isRightLifted s = isRight <$> s
         distinctUnion _ err [] = return $ Left err
@@ -651,28 +662,28 @@ specifyInternal pos stmnt fa defs a@(TypeUnion _as) b@(TypeUnion _bs) = do
             let as' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _as)
             let bs' = match ++ left where (match, left) = partition (isGeneric pos mp) (Set.toList _bs)
             usts <- getTypeMap
-            c1 <- specifyInternal pos stmnt (const sameTypes) defs (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) as')
-            c2 <- sequence <$> zipWithM (flip (specifyInternal pos stmnt (const sameTypes) defs)) (tail xs) (drop (length xs) as')
+            c1 <- specifyInternal pos stmnt (const sameTypes) defs anns (head xs) (foldr1 (mergedTypeConcrete pos usts) $ take (length xs) as')
+            c2 <- sequence <$> zipWithM (flip (specifyInternal pos stmnt (const sameTypes) defs anns)) (tail xs) (drop (length xs) as')
             case (c1, c2) of
                 (Right _, Right _) -> return $ Right $ mergedTypeConcrete pos usts b b
                 (Left err, _) -> return $ Left err
                 (_, Left err) -> return $ Left err
-specifyInternal pos stmnt f defs a b@(TypeUnion st) = do
-    x <- sequence <$> mapM (flip (specifyInternal pos stmnt f defs) a) stl
+specifyInternal pos stmnt f defs anns a b@(TypeUnion st) = do
+    x <- sequence <$> mapM (flip (specifyInternal pos stmnt f defs anns) a) stl
     case x of
         Right a -> return . Right $ head a
         Left err -> return $ Left err
     where stl = Set.toList st
-specifyInternal pos stmnt f defs a@(TypeUnion st) b = getFirst a b pos $ map (flip (specifyInternal pos stmnt f defs) b) $ Set.toList st
-specifyInternal pos stmnt f defs a@(GenericAnnotation id cns) b = 
+specifyInternal pos stmnt f defs anns a@(TypeUnion st) b = getFirst a b pos $ map (flip (specifyInternal pos stmnt f defs anns) b) $ Set.toList st
+specifyInternal pos stmnt f defs anns a@(GenericAnnotation id cns) b = 
     (\case
         Right _ -> do
-            a <- addTypeVariable pos f defs stmnt a b
+            a <- addTypeVariable pos f defs anns stmnt a b
             case a of
                 Right _ -> return $ Right b
                 Left err -> return $ Left err
-        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos stmnt f defs b) cns
-specifyInternal pos _ _ _ a b = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
+        Left err -> return $ Left err) . sequence =<< mapM (applyConstraintState pos stmnt f defs anns b) cns
+specifyInternal pos _ _ _ _ a b = (\mp -> return $ sameTypes pos mp a b) =<< getTypeMap
 
 getFirst a b pos [] = return . Left $ UnmatchedType a b pos
 getFirst a b pos (x:xs) = x >>= \case
@@ -683,32 +694,33 @@ basicSpecifyFunction :: Annotation -> SourcePos -> UserDefinedTypes -> Annotatio
 basicSpecifyFunction _ pos usts a b = sameTypesGeneric (False, True, True, Map.empty) pos usts a b $> b
 
 -- specify :: SourcePos -> Set.Set Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> Either String (Annotation, TypeRelations)
-specifyGeneralized pos f defs base mp a b = (,rel) <$> ann where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos Nothing f defs a b) (a, ((Map.empty, base), mp))
+specifyGeneralized pos f defs anns base mp a b = (,rel) <$> ann where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos Nothing f defs anns a b) (a, ((Map.empty, base), mp))
 
-specify :: SourcePos -> TwoSets Annotation -> Map.Map Annotation Annotation -> Map.Map Lhs Annotation -> Annotation -> Annotation -> Either ErrorType (Annotation, TypeRelations)
+specify :: SourcePos -> TwoSets Annotation -> Annotations Annotation -> Map.Map Annotation Annotation -> Map.Map Lhs Annotation -> Annotation -> Annotation -> Either ErrorType (Annotation, TypeRelations)
 specify pos = specifyGeneralized pos basicSpecifyFunction
 
-getPartialSpecificationRules :: SourcePos -> TwoSets Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> (Map.Map Annotation Annotation, TypeRelations)
-getPartialSpecificationRules pos defs base mp a b = (nmp, rel) where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos Nothing basicSpecifyFunction defs a b) (a, ((Map.empty, base), mp))
+getPartialSpecificationRules :: SourcePos -> TwoSets Annotation -> Annotations Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> (Map.Map Annotation Annotation, TypeRelations)
+getPartialSpecificationRules pos defs anns base mp a b = (nmp, rel) where (ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos Nothing basicSpecifyFunction defs anns a b) (a, ((Map.empty, base), mp))
 
-getPartialNoUnderScoreSpecificationRules :: SourcePos -> TwoSets Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> (Map.Map Annotation Annotation, TypeRelations)
-getPartialNoUnderScoreSpecificationRules pos defs base mp a b = 
-    (Map.mapWithKey (\k a -> if a == AnnotationLiteral "_" then k else a) nmp, rel) where (nmp, rel) = getPartialSpecificationRules pos defs base mp a b
+getPartialNoUnderScoreSpecificationRules :: SourcePos -> TwoSets Annotation -> Annotations Annotation -> Map.Map Annotation Annotation -> UserDefinedTypes -> Annotation -> Annotation -> (Map.Map Annotation Annotation, TypeRelations)
+getPartialNoUnderScoreSpecificationRules pos defs anns base mp a b = 
+    (Map.mapWithKey (\k a -> if a == AnnotationLiteral "_" then k else a) nmp, rel) where (nmp, rel) = getPartialSpecificationRules pos defs anns base mp a b
 
 getSpecificationRulesGeneralized :: SourcePos
     -> (Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation)
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> Map.Map Annotation Annotation
     -> Map.Map Lhs Annotation
     -> Annotation
     -> Annotation
     -> Either ErrorType (Annotation, Map.Map Annotation Annotation, TypeRelations)
-getSpecificationRulesGeneralized pos f defs base mp a b = case fst st of
+getSpecificationRulesGeneralized pos f defs anns base mp a b = case fst st of
     Right r -> Right (r, nmp, rel)
     Left err -> Left err 
-    where st@(ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos Nothing f defs a b) (a, ((Map.empty, base), mp))
+    where st@(ann, (ann1, ((rel, nmp), usts))) = runState (specifyInternal pos Nothing f defs anns a b) (a, ((Map.empty, base), mp))
 
-getSpecificationRules :: SourcePos -> TwoSets Annotation -> Map.Map Annotation Annotation -> Map.Map Lhs Annotation -> Annotation-> Annotation -> Either ErrorType (Annotation, Map.Map Annotation Annotation, TypeRelations)
+getSpecificationRules :: SourcePos -> TwoSets Annotation -> Annotations Annotation -> Map.Map Annotation Annotation -> Map.Map Lhs Annotation -> Annotation-> Annotation -> Either ErrorType (Annotation, Map.Map Annotation Annotation, TypeRelations)
 getSpecificationRules pos = getSpecificationRulesGeneralized pos basicSpecifyFunction
 
 sameTypesGenericBool gs crt pos mp a b = case sameTypesGeneric gs pos mp a b of
@@ -719,7 +731,7 @@ sameTypesBool pos mp a b = case sameTypes pos mp a b of
     Right _ -> True
     Left _ -> False
 
-specifyTypesBool pos defs base usts a b = case specify pos defs base usts a b of
+specifyTypesBool pos defs anns base usts a b = case specify pos defs anns base usts a b of
     Right _ -> True
     Left _ -> False                                     
 
@@ -877,8 +889,8 @@ makeImpl a b _ = b
 sameTypesImpl :: Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation
 sameTypesImpl = makeImpl sameTypesNoUnionSpec sameTypes
 
-matchingUserDefinedType :: P.SourcePos -> TwoSets Annotation -> UserDefinedTypes -> Annotation -> Maybe Annotation
-matchingUserDefinedType pos defs usts t = (\(LhsIdentifer id _, _) -> Just $ Annotation id) =<< find (isRight . snd) (Map.mapWithKey (,) $ Map.map (flip (specify pos defs Map.empty usts) t) usts)
+matchingUserDefinedType :: P.SourcePos -> TwoSets Annotation -> Annotations Annotation -> UserDefinedTypes -> Annotation -> Maybe Annotation
+matchingUserDefinedType pos defs anns usts t = (\(LhsIdentifer id _, _) -> Just $ Annotation id) =<< find (isRight . snd) (Map.mapWithKey (,) $ Map.map (flip (specify pos defs anns Map.empty usts) t) usts)
 
 evaluateTExpr :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> State Annotation (Either ErrorType Annotation)
 evaluateTExpr pos usts (IsType _ ann) = do
@@ -897,6 +909,11 @@ evaluateTExpr pos usts (NegateTypeDeduction tExpr) = do
 
 evaluateTExprTotal :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> Annotation -> Either ErrorType Annotation
 evaluateTExprTotal pos usts tExpr typLhs = res $> st where (res, st) = runState (evaluateTExpr pos usts tExpr) typLhs
+
+getAnnotationsState :: AnnotationState (Annotations (Finalizeable Annotation)) (Annotations Annotation)
+getAnnotationsState = do
+    (_, ((_, anns), _)) <- get
+    return $ removeFinalization anns
 
 getAssumptionType :: Node -> AnnotationState (Annotations (Finalizeable Annotation)) (Result ErrorType Annotation)
 getAssumptionType (DeclN (Decl lhs n a _)) = case a of 
@@ -924,12 +941,13 @@ getAssumptionType (DeclN (Assign lhs n pos)) = getAssumptionType n >>= \x -> mak
 getAssumptionType (DeclN (FunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs (Finalizeable False ann)
 getAssumptionType (CreateNewType lhs args pos) = do
     mp <- getTypeMap
+    annotations <- getAnnotationsState
     argsn <- sequence <$> mapM getAssumptionType args
     case argsn of
         Right as -> case Map.lookup lhs mp of
             Just ntp@(NewTypeAnnotation id anns _) -> 
                 if length anns == length args then 
-                    case join $ specify pos <$> Right (fromUnionLists (map (collectGenenrics mp) as, map (collectGenenricsHOF mp) as)) <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
+                    case join $ specify pos <$> Right (fromUnionLists (map (collectGenenrics mp) as, map (collectGenenricsHOF mp) as)) <*> Right annotations <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
                         Right as -> return $ NewTypeInstanceAnnotation id <$> argsn
                         Left err -> return $ Left err
                 else return . Left $ CallError anns as pos
@@ -939,14 +957,15 @@ getAssumptionType (CreateNewType lhs args pos) = do
 getAssumptionType (DeclN (OpenFunctionDecl lhs ann _)) = Right <$> insertAnnotation lhs (Finalizeable False ann)
 getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft pos)) = do
     a <- getAnnotationState lhs
+    annotations <- getAnnotationsState
     mp <- getTypeMap
     case a of
         Left err -> return $ Left err
         Right a@(OpenFunctionAnnotation anns ret' ft impls) -> do
             let b = makeFunAnnotation args ret
-            case getSpecificationRules pos (TwoSets (collectGenenrics mp implft) (collectGenenricsHOF mp implft)) Map.empty mp ft implft of
+            case getSpecificationRules pos (TwoSets (collectGenenrics mp implft) (collectGenenricsHOF mp implft)) annotations Map.empty mp ft implft of
                 Right (_, base, _) -> 
-                    case getSpecificationRules pos (fromUnionLists (map (collectGenenrics mp) (ret:map snd args), map (collectGenenricsHOF mp) (ret:map snd args))) base mp a b of
+                    case getSpecificationRules pos (fromUnionLists (map (collectGenenrics mp) (ret:map snd args), map (collectGenenricsHOF mp) (ret:map snd args))) annotations base mp a b of
                         Left err -> return $ Left err
                         Right (_, res, _) -> 
                                     let 
@@ -961,18 +980,19 @@ getAssumptionType (DeclN impl@(ImplOpenFunction lhs args (Just ret) ns implft po
 getAssumptionType (DeclN (ImplOpenFunction lhs args Nothing ns implft pos)) = do
     a <- getAnnotationState lhs
     mp <- getTypeMap
+    annotations <- getAnnotationsState
     case a of
         Left err -> return $ Left err
         Right fun@(OpenFunctionAnnotation anns ret' ft impls) -> 
-            case getSpecificationRules pos (TwoSets (collectGenenrics mp implft) (collectGenenricsHOF mp implft)) Map.empty mp ft implft of
+            case getSpecificationRules pos (TwoSets (collectGenenrics mp implft) (collectGenenricsHOF mp implft)) annotations Map.empty mp ft implft of
                 Right (_, base, _) -> do
                     let defsNoRet = fromUnionLists (map (collectGenenrics mp . snd) args, map (collectGenenricsHOF mp . snd) args)
-                    let (specificationRules, rels) = getPartialNoUnderScoreSpecificationRules pos defsNoRet Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
-                    case substituteVariables pos defsNoRet rels specificationRules mp ret' of
+                    let (specificationRules, rels) = getPartialNoUnderScoreSpecificationRules pos defsNoRet annotations Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
+                    case substituteVariables pos defsNoRet annotations rels specificationRules mp ret' of
                         Left a -> return . Left $ UnInferrableType (Just a) pos
                         Right inferredRetType ->
                             let spfun = makeFunAnnotation args inferredRetType in
-                            case getSpecificationRules pos (fromUnionLists (map (collectGenenrics mp) (inferredRetType:map snd args), map (collectGenenricsHOF mp) (inferredRetType:map snd args))) base mp fun spfun of
+                            case getSpecificationRules pos (fromUnionLists (map (collectGenenrics mp) (inferredRetType:map snd args), map (collectGenenricsHOF mp) (inferredRetType:map snd args))) annotations base mp fun spfun of
                                 Left err -> return $ Left err
                                 Right (_, res, _) -> 
                                     let 
@@ -1037,16 +1057,17 @@ getAssumptionType (FunctionDef args ret body pos) =
         Nothing -> do
             whole_old_ans@(a, ((i, old_ans), mp)) <- get
             let program = Program body
-            let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just old_ans)) mp), mp))
+            let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args, Set.map (Finalizeable True) . Set.unions $ map (collectGenenricsHOF mp . snd) args) (Just old_ans)) mp), mp))
             put ans
             mapM_ getAssumptionType body
             (new_ans, _) <- gets snd
             x <- firstInferrableReturn pos body
+            annotations <- getAnnotationsState
             case x of
                 Right ret -> do
                     typ <- getAnnotationState $ LhsIdentifer "return" pos
                     let ntyp = typ >>= (\c -> 
-                            if c then maybe typ Right . matchingUserDefinedType pos emptyTwoSets (Map.filter isStructOrUnionOrFunction mp) =<< typ 
+                            if c then maybe typ Right . matchingUserDefinedType pos emptyTwoSets annotations (Map.filter isStructOrUnionOrFunction mp) =<< typ 
                             else typ
                             ) . isSearchable
                     put whole_old_ans
@@ -1069,12 +1090,13 @@ getAssumptionType (Call e args pos) = (\case
                     Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
                         anns <- sequence <$> mapM consistentTypes args
+                        annotations <- getAnnotationsState
                         case anns of
                             Right anns -> let 
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns)
-                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos defs Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) in
-                                case substituteVariables pos defs rel spec mp ret of
-                                    Right ret' -> case specify pos defs Map.empty mp fann (FunctionAnnotation anns ret') of
+                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos defs annotations Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) in
+                                case substituteVariables pos defs annotations rel spec mp ret of
+                                    Right ret' -> case specify pos defs annotations Map.empty mp fann (FunctionAnnotation anns ret') of
                                         Right _ -> return $ Right ret'
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
@@ -1082,17 +1104,18 @@ getAssumptionType (Call e args pos) = (\case
                     Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> do
                         mp <- getTypeMap
                         anns <- sequence <$> mapM consistentTypes args
+                        annotations <- getAnnotationsState
                         case anns of
                             Right anns -> let
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns)
-                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos defs Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns (AnnotationLiteral "_")) in
-                                case substituteVariables pos defs rel spec mp oret of
-                                    Right ret' -> case getSpecificationRules pos defs Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns ret') of
+                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos defs annotations Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns (AnnotationLiteral "_")) in
+                                case substituteVariables pos defs annotations rel spec mp oret of
+                                    Right ret' -> case getSpecificationRules pos defs annotations Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns ret') of
                                         Right (_, base, _) -> case Map.lookup ft base of
                                             Just a -> maybe 
                                                     (return . Left $ NoInstanceFound opf a pos) 
                                                     (const . return $ Right ret')
-                                                    (find (\b -> specifyTypesBool pos defs base mp b a) impls)
+                                                    (find (\b -> specifyTypesBool pos defs annotations base mp b a) impls)
                                             Nothing -> return . Left $ NotOccuringTypeOpenFunction ft pos
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
@@ -1105,17 +1128,18 @@ getAssumptionType (StructN (Struct ns _)) =
             (const . return $ StructAnnotation <$> sequence xs)) =<< mapM getAssumptionType ns
 getAssumptionType (Access st p pos) = do
     mp <- getTypeMap
-    f mp =<< getTypeStateFrom (consistentTypes st) pos where 
+    annotations <- getAnnotationsState
+    f mp annotations =<< getTypeStateFrom (consistentTypes st) pos where 
 
-    f :: UserDefinedTypes -> Either ErrorType Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either ErrorType Annotation)
-    f mp = \case
+    f :: UserDefinedTypes -> Annotations Annotation -> Either ErrorType Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either ErrorType Annotation)
+    f mp annotations = \case
             Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
             Right g@(RigidAnnotation _ cns) -> return $ genericHas pos g p cns
             Right (TypeUnion st) -> ((\x -> head <$> mapM (sameTypes pos mp (head x)) x) =<<) <$> x where 
-                x = sequence <$> mapM (\x -> f mp =<< getTypeState x pos) stl
+                x = sequence <$> mapM (\x -> f mp annotations =<< getTypeState x pos) stl
                 stl = Set.toList st
             Right (NewTypeInstanceAnnotation id anns) -> 
-                accessNewType anns
+                accessNewType annotations anns
                 (\(NewTypeAnnotation _ _ ps) -> return $ toEither (FieldNotFound p (AnnotationLiteral $ show ps) pos) (Map.lookup p ps)) 
                 (LhsIdentifer id pos)
             Right (StructAnnotation ps) -> return $ toEither (FieldNotFound p (AnnotationLiteral $ show ps) pos) (Map.lookup p ps)
@@ -1171,7 +1195,7 @@ baseMapping = Map.fromList $ map (second (Finalizeable True)) [
     (LhsIdentifer "neg" sourcePos, FunctionAnnotation [AnnotationLiteral "Int"] (AnnotationLiteral "Int"))
     ]
 
-assumeProgram prog i = assumeProgramMapping prog i (Annotations Map.empty (Just $ Annotations baseMapping Nothing))
+assumeProgram prog i = assumeProgramMapping prog i (Annotations (Map.empty, Set.empty) (Just $ Annotations (baseMapping, Set.empty) Nothing))
 
 noTypeFound expected pos = "No type named " ++ expected ++ " found\n" ++ showPos pos
 unmatchedType a b pos = "Can't match expected type " ++ show a ++ " with given type " ++ show b ++ "\n" ++ showPos pos
@@ -1217,7 +1241,7 @@ mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
         | otherwise = mergedType gs crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
     go gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
         | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 ls
-        | e1 == e2 && length as1 < length as2 = case flip (mergedType gs crt pos mp) b <$> fullAnotationFromInstanceFree pos mp a of
+        | e1 == e2 && length as1 < length as2 = case flip (mergedType gs crt pos mp) b <$> fullAnotationFromInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) mp a of
             Right a -> a
             Left  _ -> createUnion a b
         | otherwise = createUnion a b
@@ -1302,8 +1326,8 @@ sameTypesGenericCrt (_, gs, leftGeneral, cns) crt pos mp a@(NewTypeInstanceAnnot
     | otherwise = Left $ UnmatchedType a b pos
 sameTypesGenericCrt gs@(_, _, leftGeneral, _) crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
     | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 <$> ls
-    | e1 == e2 && length as1 < length as2 && isGeneralizedInstanceFree pos a mp = flip (sameTypesGenericCrt gs crt pos mp) b =<< fullAnotationFromInstanceFree pos mp a
-    | e1 == e2 && length as1 > length as2 && isGeneralizedInstanceFree pos b mp && leftGeneral = sameTypesGenericCrt gs crt pos mp a =<< fullAnotationFromInstanceFree pos mp b
+    | e1 == e2 && length as1 < length as2 && isGeneralizedInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) a mp = flip (sameTypesGenericCrt gs crt pos mp) b =<< fullAnotationFromInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) mp a
+    | e1 == e2 && length as1 > length as2 && isGeneralizedInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) b mp && leftGeneral = sameTypesGenericCrt gs crt pos mp a =<< fullAnotationFromInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) mp b
     | otherwise = failout crt a b pos 
     where ls = zipWithM (sameTypesGenericCrt gs crt pos mp) as1 as2
 sameTypesGenericCrt gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
@@ -1470,37 +1494,37 @@ filterUnion pos usts f _a _b =
         go pos usts f a b = if f a b then Right a else Left $ UnmatchedType a b pos
 
 excludeSameTypes pos usts a b = any isRight xs where
-    xs = [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (TwoSets (collectGenenrics usts a) (collectGenenrics usts a)) Map.empty usts a b) $> b]
+    xs = [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (TwoSets (collectGenenrics usts a) (collectGenenrics usts a)) (Annotations (Map.empty, Set.empty) Nothing) Map.empty usts a b) $> b]
 
-accessNewType givenArgs f fid@(LhsIdentifer id pos) =
+accessNewType anns givenArgs f fid@(LhsIdentifer id pos) =
     (\case
         Right x -> f x
-        Left err -> return . Left $ err) =<< getFullAnnotation fid givenArgs
-accessNewType _ _ _ = error "Only unions allowed"
+        Left err -> return . Left $ err) =<< getFullAnnotation anns fid givenArgs
+accessNewType _ _ _ _ = error "Only unions allowed"
 
-fullAnotationFromInstance pos (NewTypeInstanceAnnotation id args) = getFullAnnotation (LhsIdentifer id pos) args
-fullAnotationFromInstance a b = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ "]"
+fullAnotationFromInstance pos anns (NewTypeInstanceAnnotation id args) = getFullAnnotation anns (LhsIdentifer id pos) args
+fullAnotationFromInstance _ a b = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ "]"
 
-fullAnotationFromInstanceFree pos mp (NewTypeInstanceAnnotation id givenArgs) = 
+fullAnotationFromInstanceFree pos anns mp (NewTypeInstanceAnnotation id givenArgs) = 
     case Map.lookup fid mp of
         Just x@(NewTypeAnnotation id args map) -> 
-            substituteVariablesOptFilter False pos (f mp) Map.empty (Map.fromList $ zip args givenArgs) mp x
+            substituteVariablesOptFilter False pos (f mp) anns Map.empty (Map.fromList $ zip args givenArgs) mp x
         Just a -> Left $ NoTypeFound id pos
         Nothing -> Left $ NoTypeFound id pos
     where 
         f mp = fromUnionLists (map (collectGenenrics mp) givenArgs, map (collectGenenricsHOF mp) givenArgs)
         fid = LhsIdentifer id pos
-fullAnotationFromInstanceFree a b c = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ ", " ++ show c ++ "]"
+fullAnotationFromInstanceFree a _ b c = error $ "Unexpected argments for isGeneralizedInstance [" ++ show a ++ ", " ++ show b ++ ", " ++ show c ++ "]"
 
-getFullAnnotation fid@(LhsIdentifer id pos) givenArgs = do
+getFullAnnotation anns fid@(LhsIdentifer id pos) givenArgs = do
     mp <- getTypeMap
     case Map.lookup fid mp of
         Just x@(NewTypeAnnotation id args map) -> 
-            return $ substituteVariablesOptFilter False pos (f mp) Map.empty (Map.fromList $ zip args givenArgs) mp x
+            return $ substituteVariablesOptFilter False pos (f mp) anns Map.empty (Map.fromList $ zip args givenArgs) mp x
         Just a -> return . Left $ NoTypeFound id pos
         Nothing -> return . Left $ NoTypeFound id pos
     where f mp = fromUnionLists (map (collectGenenrics mp) givenArgs, map (collectGenenricsHOF mp) givenArgs)
-getFullAnnotation a b = error $ "Unexpected argments for getFullAnnotation [" ++ show a ++ ", " ++ show b ++ "]"
+getFullAnnotation _ a b = error $ "Unexpected argments for getFullAnnotation [" ++ show a ++ ", " ++ show b ++ "]"
 
 modifyAccess mp pos acc whole expected given prop access accPos f = case whole of
     g@(GenericAnnotation _ cns) -> return $ genericHas pos g prop cns
@@ -1548,16 +1572,17 @@ consistentTypesPass p (DeclN (FunctionDecl lhs ann pos)) = do
 consistentTypesPass p (DeclN (ImplOpenFunction lhs args (Just ret) exprs _ pos)) = consistentTypesPass p $ FunctionDef args (Just ret) exprs pos
 consistentTypesPass p (DeclN (ImplOpenFunction lhs args Nothing exprs implft pos)) = do
     a <- getAnnotationState lhs
+    annotations <- getAnnotationsState
     mp <- getTypeMap
     case a of
         Left err -> return $ Left err
         Right fun@(OpenFunctionAnnotation anns ret' ft impls) -> do
             let defs = fromUnionLists (map (collectGenenrics mp . snd) args, map (collectGenenricsHOF mp . snd) args)
-            let (specificationRules, rels) = getPartialNoUnderScoreSpecificationRules pos defs Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
-            case substituteVariables pos defs rels specificationRules mp ret' of
+            let (specificationRules, rels) = getPartialNoUnderScoreSpecificationRules pos defs annotations Map.empty mp fun (FunctionAnnotation (map snd args) (AnnotationLiteral "_"))
+            case substituteVariables pos defs annotations rels specificationRules mp ret' of
                 Left err -> return . Left $ UnInferrableType (Just err) pos
                 Right inferredRetType ->
-                    case specify pos defs Map.empty mp fun (makeFunAnnotation args inferredRetType) of
+                    case specify pos defs annotations Map.empty mp fun (makeFunAnnotation args inferredRetType) of
                         Left err -> return $ Left err
                         Right (ann, defs) -> consistentTypesPass p $ FunctionDef args (Just inferredRetType) exprs pos
         Right a -> return . Left $ UnExtendableType a pos
@@ -1575,12 +1600,13 @@ consistentTypesPass p (IfExpr cond t e pos) = do
         Left err -> return $ Left err
 consistentTypesPass p (CreateNewType lhs@(LhsIdentifer id _) args pos) = do
     mp <- getTypeMap
+    annotations <- getAnnotationsState
     argsn <- sequence <$> mapM (consistentTypesPass p) args
     case argsn of
         Right as -> case Map.lookup lhs mp of
             Just ntp@(NewTypeAnnotation id anns _) -> 
                 if length args == length anns then
-                case specify pos <$> Right (fromUnionLists (map (collectGenenrics mp) as, map (collectGenenricsHOF mp) as)) <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
+                case specify pos <$> Right (fromUnionLists (map (collectGenenrics mp) as, map (collectGenenricsHOF mp) as)) <*> Right annotations <*> Right Map.empty <*> Right mp <*> Right ntp <*> (NewTypeInstanceAnnotation id <$> argsn) of
                     Right _ -> return $ NewTypeInstanceAnnotation id <$> argsn
                     Left err -> return $ Left err
                 else return . Left $ CallError anns as pos
@@ -1654,17 +1680,18 @@ consistentTypesPass p (StructN (Struct ns _)) = (\case
     Left err -> return $ Left err) . sequence =<< mapM (consistentTypesPass p) ns
 consistentTypesPass pass (Access st p pos) = do
     mp <- getTypeMap
-    f mp =<< getTypeStateFrom (consistentTypesPass pass st) pos where 
+    annotations <- getAnnotationsState
+    f mp annotations =<< getTypeStateFrom (consistentTypesPass pass st) pos where 
 
-    f :: UserDefinedTypes -> Either ErrorType Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either ErrorType Annotation)
-    f mp = \case
+    f :: UserDefinedTypes -> Annotations Annotation -> Either ErrorType Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) (Either ErrorType Annotation)
+    f mp annotations = \case
             Right g@(GenericAnnotation _ cns) -> return $ genericHas pos g p cns
             Right g@(RigidAnnotation _ cns) -> return $ genericHas pos g p cns
             Right (TypeUnion st) -> ((\x -> head <$> mapM (sameTypes pos mp (head x)) x) =<<) <$> x where 
-                x = sequence <$> mapM (\x -> f mp =<< getTypeState x pos) stl
+                x = sequence <$> mapM (\x -> f mp annotations =<< getTypeState x pos) stl
                 stl = Set.toList st
             Right (NewTypeInstanceAnnotation id anns) -> 
-                accessNewType anns
+                accessNewType annotations anns
                 (\(NewTypeAnnotation _ _ ps) -> return $ toEither (FieldNotFound p (AnnotationLiteral $ show ps) pos) (Map.lookup p ps))  
                 (LhsIdentifer id pos)
             Right (StructAnnotation ps) -> return $ toEither (FieldNotFound p (AnnotationLiteral $ show ps) pos) (Map.lookup p ps)
@@ -1679,7 +1706,7 @@ consistentTypesPass p (FunctionDef args ret body pos) =
                 (a, ((i, ans), mp)) <- get
                 mp <- getTypeMap
                 let program = Program body
-                let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True $ rigidizeTypeVariables mp ret):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just ans)) mp), mp))
+                let ans' = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable True $ rigidizeTypeVariables mp ret):map (second (Finalizeable True . rigidizeTypeVariables mp)) args, Set.map (Finalizeable True) . Set.unions $ collectGenenricsHOF mp ret:map (collectGenenricsHOF mp . snd) args) (Just ans)) mp), mp))
                 put ans'
                 xs <- sequence <$> mapM (consistentTypesPass p) body
                 s <- getAnnotationState (LhsIdentifer "return" pos)
@@ -1694,7 +1721,7 @@ consistentTypesPass p (FunctionDef args ret body pos) =
                 finalizeAnnotationState
                 (a, ((i, old_ans), mp)) <- get
                 let program = Program body
-                let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args) (Just old_ans)) mp), mp))
+                let ans = (a, ((i, assumeProgramMapping program i (Annotations (Map.fromList $ (LhsIdentifer "return" pos, Finalizeable False $ AnnotationLiteral "_"):map (second (Finalizeable True . rigidizeTypeVariables mp)) args, Set.map (Finalizeable True) . Set.unions $ map (collectGenenricsHOF mp . snd) args) (Just old_ans)) mp), mp))
                 put ans
                 xs <- sequence <$> mapM (consistentTypesPass p) body
                 (_, ((i, new_ans), _)) <- get
@@ -1716,30 +1743,32 @@ consistentTypesPass p (Call e args pos) =  (\case
                     Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
                         anns <- sequence <$> mapM (consistentTypesPass p) args
+                        annotations <- getAnnotationsState
                         case anns of
                             Right anns -> let 
-                                (spec, rels) = getPartialNoUnderScoreSpecificationRules pos defs Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) 
+                                (spec, rels) = getPartialNoUnderScoreSpecificationRules pos defs annotations Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) 
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns) in
-                                case substituteVariables pos defs rels spec mp ret of
-                                    Right ret' -> case specify pos defs Map.empty mp fann (FunctionAnnotation anns ret') of
+                                case substituteVariables pos defs annotations rels spec mp ret of
+                                    Right ret' -> case specify pos defs annotations Map.empty mp fann (FunctionAnnotation anns ret') of
                                         Right r -> return $ Right ret'
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
-                            Left err -> return $ Left err                    
+                            Left err -> return $ Left err
                     Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> do
                         mp <- getTypeMap
+                        annotations <- getAnnotationsState
                         anns <- sequence <$> mapM (consistentTypesPass p) args
                         case anns of
                             Right anns -> let 
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns)
-                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos defs Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns (AnnotationLiteral "_")) in
-                                case substituteVariables pos defs rel spec mp oret of
-                                    Right ret' -> case getSpecificationRules pos defs Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns ret') of
+                                (spec, rel) = getPartialNoUnderScoreSpecificationRules pos defs annotations Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns (AnnotationLiteral "_")) in
+                                case substituteVariables pos defs annotations rel spec mp oret of
+                                    Right ret' -> case getSpecificationRules pos defs annotations Map.empty mp (FunctionAnnotation oanns oret) (FunctionAnnotation anns ret') of
                                         Right (_, base, _) -> case Map.lookup ft base of
                                             Just a -> maybe 
                                                     (return . Left $ NoInstanceFound opf a pos) 
                                                     (const . return $ Right ret')
-                                                    (find (\b -> specifyTypesBool pos defs base mp b a) impls)
+                                                    (find (\b -> specifyTypesBool pos defs annotations base mp b a) impls)
                                             Nothing -> return . Left $ NotOccuringTypeOpenFunction ft pos
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
@@ -1828,26 +1857,28 @@ defineSingleType pos ann = do
             new_anns <- f (invertUserDefinedTypes mp) anns
             put (a, ((i, new_anns), mp))
             where 
-                f mp (Annotations anns rest) = Annotations <$> sequence (
-                    Map.map (\ann2 -> if isRight $ sameTypesImpl ann2 pos mp ann ann2 then return . Annotation $ show tn else defineSingleType pos ann2) anns
-                    ) <*> sequence (f mp <$> rest)
+                f mp (Annotations (anns, set) rest) = Annotations <$> ((, set) <$> sequence (
+                        Map.map 
+                            (\ann2 -> if isRight $ sameTypesImpl ann2 pos mp ann ann2 then return . Annotation $ show tn else defineSingleType pos ann2) 
+                            anns
+                        )) <*> sequence (f mp <$> rest)
 
 defineTypesState :: Annotations Annotation -> DefineTypesState Annotation (Annotations Annotation)
-defineTypesState (Annotations anns rest) = Annotations
-  <$> sequence (Map.mapWithKey (\(LhsIdentifer _ pos) v -> defineSingleType pos v) anns)
+defineTypesState (Annotations (anns, set) rest) = Annotations
+  <$> ((,set) <$> sequence (Map.mapWithKey (\(LhsIdentifer _ pos) v -> defineSingleType pos v) anns))
   <*> sequence (defineTypesState <$> rest)
 
 defineAllTypes :: UserDefinedTypes -> Annotations Annotation -> (UserDefinedTypes, Annotations Annotation)
 defineAllTypes usts anns = (invertUserDefinedTypes $ snd $ snd st, snd . fst . snd $ st) where 
     st = execState (defineTypesState anns) (AnnotationLiteral "_", ((0, anns), invertUserDefinedTypes usts))
 
-removeFinalization :: Annotations (Finalizeable a) -> Annotations a
-removeFinalization (Annotations anns Nothing) = Annotations (Map.map fromFinalizeable anns) Nothing
-removeFinalization (Annotations anns rest) = Annotations (Map.map fromFinalizeable anns) (removeFinalization <$> rest)
+removeFinalization :: Ord a => Annotations (Finalizeable a) -> Annotations a
+removeFinalization (Annotations (anns, set) Nothing) = Annotations (Map.map fromFinalizeable anns, Set.map fromFinalizeable set) Nothing
+removeFinalization (Annotations (anns, set) rest) = Annotations (Map.map fromFinalizeable anns, Set.map fromFinalizeable set) (removeFinalization <$> rest)
 
-addFinalization :: Annotations a -> Annotations (Finalizeable a)
-addFinalization (Annotations anns Nothing) = Annotations (Map.map (Finalizeable True) anns) Nothing
-addFinalization (Annotations anns rest) = Annotations (Map.map (Finalizeable True) anns) (addFinalization <$> rest)
+addFinalization :: Ord a => Annotations a -> Annotations (Finalizeable a)
+addFinalization (Annotations (anns, set) Nothing) = Annotations (Map.map (Finalizeable True) anns, Set.map (Finalizeable True) set) Nothing
+addFinalization (Annotations (anns, set) rest) = Annotations (Map.map (Finalizeable True) anns, Set.map (Finalizeable True) set) (addFinalization <$> rest)
 
 invertUserDefinedTypes :: Ord k => Map.Map a k -> Map.Map k a
 invertUserDefinedTypes usts = Map.fromList $ Map.elems $ Map.mapWithKey (curry swap) usts

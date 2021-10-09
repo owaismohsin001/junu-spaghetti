@@ -328,10 +328,16 @@ newtype Program = Program [Node]
 instance Show Program where
     show (Program ns) = intercalate "\n" $ map show ns
 
-data Annotations a = Annotations (Map.Map Lhs a) (Maybe (Annotations a))
+data Annotations a = Annotations (Map.Map Lhs a, Set.Set a) (Maybe (Annotations a))
 
 instance Show a => Show (Annotations a) where
-    show (Annotations mp res) = intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp
+    show (Annotations (mp, _) res) = 
+        intercalate "\n" $ Map.elems $ Map.mapWithKey (\k v -> show k ++ ": " ++ show v) mp
+
+showTypes :: Show a => Annotations a -> String
+showTypes (Annotations (_, types) rest) = "{" ++ intercalate ", " (Set.toList (Set.map show types)) ++ "}" ++ case rest of
+    Just x -> " -> " ++ showTypes x
+    Nothing -> ""
 
 type UserDefinedTypes = Map.Map Lhs Annotation
 
@@ -344,6 +350,12 @@ showWhole (Finalizeable b x) = "Finzalizeable " ++ show b ++ " " ++ show x
 
 instance Show a => Show (Finalizeable a) where
     show (Finalizeable _ a) = show a
+
+instance Eq a => Eq (Finalizeable a) where
+    (Finalizeable _ a) == (Finalizeable _ b) = a == b
+
+instance Ord a => Ord (Finalizeable a) where
+    (Finalizeable _ a) `compare` (Finalizeable _ b) = a `compare` b
 
 fromFinalizeable :: Finalizeable a -> a
 fromFinalizeable (Finalizeable _ a) = a

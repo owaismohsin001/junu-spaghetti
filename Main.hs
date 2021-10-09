@@ -128,7 +128,7 @@ main = do
             | head k == '_' && head (tail k) == '_' = False
             | otherwise = True
         p a _ = error $ "Unexpected pattern " ++ show a
-        f (Annotations mp r) = Annotations (Map.filterWithKey p mp) r
+        f (Annotations (mp, s) r) = Annotations (Map.filterWithKey p mp, s) r
 
         printUsts :: UserDefinedTypes -> IO ()
         printUsts usts = sequence_ $ Map.mapWithKey (\k v -> putStrLn $ show k ++ " = " ++ show v) usts
