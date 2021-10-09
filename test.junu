@@ -178,7 +178,7 @@ if x is Int {
     b = if x < 10 then ftr("Hello ", st) else false
 }
 
-let basicPerson = (name: String, age: Int, male: Bool) => {
+let basicPerson = (name: String, age: Int, male: Bool) => Person {
     return {name: name, age: age, male: male, pet: {species: "Cat", name: "Tom", color: "White"}, parent: {}}
 }
 

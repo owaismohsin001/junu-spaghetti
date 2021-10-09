@@ -17,7 +17,6 @@ import Data.Maybe
 import Data.Tuple
 import qualified Parser
 import Nodes
-import Nodes (Annotation(Annotation))
 
 insertAnnotation :: Lhs -> Finalizeable Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) Annotation
 insertAnnotation k v@(Finalizeable _ a) = do
@@ -145,7 +144,7 @@ getTypeStateFrom f pos = do
         Right res -> getTypeState res pos
         Left err -> return $ Left err
 
-lookupInTypes ann (Annotations (_, set) (Just rest)) = if Set.member ann set then True else lookupInTypes ann rest
+lookupInTypes ann (Annotations (_, set) (Just rest)) = Set.member ann set || lookupInTypes ann rest
 lookupInTypes ann (Annotations (_, set) Nothing) = Set.member ann set
 
 firstInferrableReturn :: P.SourcePos -> [Node] -> AnnotationState (Annotations (Finalizeable Annotation)) (Either ErrorType Node)
@@ -377,9 +376,12 @@ addTypeVariable pos f defs anns stmnt k v = do
     (a, ((rs, mp), usts)) <- get
     case Map.lookup k mp of
         Nothing -> addToMap k v
-        Just a -> if collectGenenricsNoRigids usts a == Set.empty && collectGenenricsNoRigids usts v == Set.empty then case f k pos usts a v of
+        Just a -> if collectGenenricsNoRigids usts a == Set.empty && collectGenenricsNoRigids usts v == Set.empty then 
+            case f k pos usts a v of
                 Right v -> addToMap k v
-                Left err -> lastResort a rs mp usts (Left err)
+                Left err -> case f k pos usts v a of
+                    Left err -> lastResort a rs mp usts (Left err)
+                    Right v -> return $ Right v
             else specifyInternal pos stmnt f defs anns a v >>= \case
                 Right v -> addToMap k v
                 Left _ -> specifyInternal pos stmnt f defs anns v a >>= \case
@@ -1336,7 +1338,7 @@ sameTypesGenericCrt gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation p
     | isJust $ sequence ls = maybe (failout crt a b pos) (success crt) (StructAnnotation <$> sequence ls)
     | otherwise = failout crt a b pos
     where
-        ls = Map.mapWithKey (f ps1) ps2
+        ls = Map.mapWithKey (f ps2) ps1
         f ps2 k v1 = 
             case Map.lookup k ps2 of
                 Just v2
