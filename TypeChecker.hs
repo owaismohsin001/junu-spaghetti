@@ -1529,7 +1529,8 @@ consistentTypesPass :: ConsistencyPass -> Node -> AnnotationState (Annotations (
 consistentTypesPass VerifyAssumptions (DeclN (Decl lhs rhs _ pos)) = (\a b m -> mergedTypeConcrete pos m <$> a <*> b)
     <$> getAnnotationState lhs <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
 consistentTypesPass RefineAssumtpions (DeclN (Decl lhs rhs _ pos)) = consistentTypesPass RefineAssumtpions rhs >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
-consistentTypesPass VerifyAssumptions (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = consistentTypesPass VerifyAssumptions rhs
+consistentTypesPass VerifyAssumptions (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) =
+    (>>) <$> consistentTypesPass VerifyAssumptions (Access access prop accPos) <*> consistentTypesPass VerifyAssumptions rhs
 
 -- This check can be performed, but right now it fails in cases whenever cycles are created
 -- consistentTypesPass VerifyAssumptions (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
