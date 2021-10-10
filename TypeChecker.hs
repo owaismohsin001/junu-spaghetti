@@ -39,9 +39,9 @@ modifyAnnotation usts k@(LhsIdentifer _ pos) ann (Annotations (anns, set) rest) 
     case Map.lookup k anns of
         Just (Finalizeable False v) -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns, set) rest
         Just (Finalizeable True v) -> 
-            case sameTypesNoUnionSpec pos usts ann v of
+            case sameTypesImpl ann pos usts v ann of
                 Right _ -> Right $ Annotations (Map.insert k (Finalizeable False ann) anns, set) rest
-                Left err -> Left $ IrreconcilableAnnotatatedType k ann v pos
+                Left err -> Left $ IrreconcilableAnnotatatedType k v ann pos
         Nothing -> 
             case rest of
                 Just rs -> case modifyAnnotation usts k ann rs of
@@ -1228,6 +1228,7 @@ mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
                 in go ((h:hs):acc) nohs
         groupable (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2
         groupable (FunctionAnnotation anns1 ret1) (FunctionAnnotation anns2 ret2) = length anns1 == length anns2
+        groupable (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
         groupable a b = sameTypesBool pos mp a b
     simplify a = a
 
@@ -1250,18 +1251,8 @@ mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
         where ls = zipWith (mergedType gs crt pos mp) as1 as2
     go gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
         | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then a else createUnion a b
-        | Map.size ps1 /= Map.size ps2 = createUnion a b
-        | isJust $ sequence ls = maybe (createUnion a b) StructAnnotation (sequence ls)
+        | Map.keys ps1 == Map.keys ps2 = StructAnnotation $ Map.unionWith (mergedType gs crt pos mp) ps1 ps2
         | otherwise = createUnion a b
-        where
-            ls = Map.mapWithKey (f ps1) ps2
-            f ps2 k v1 = 
-                case Map.lookup k ps2 of
-                    Just v2
-                        -> case sameTypesGenericCrt gs crt pos mp v1 v2 of
-                            Right a -> Just a
-                            Left err -> Nothing
-                    Nothing -> Nothing
     go gs crt pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
         case mapM_ (f mp $ Set.toList as) (Set.toList bs) of
             Right () -> foldr1 (mergedType gs crt pos mp) (Set.toList bs)
@@ -1285,9 +1276,9 @@ mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
     go gs crt pos mp (Annotation id) b = 
         case Map.lookup (LhsIdentifer id pos) mp of
             Just a -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
-    go gs crt pos mp b (Annotation id) = 
+    go gs crt pos mp a (Annotation id) = 
         case Map.lookup (LhsIdentifer id pos) mp of
-            Just a -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
+            Just b -> unionFrom a b $ sameTypesGenericCrt gs crt pos mp a b
     go tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
         | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = createUnion a b
         | otherwise = if id1 == id2 then unionFrom a b $ zipWithM (matchConstraint tgs crt pos mp) cs1 cs2 *> success crt a else createUnion a b
@@ -1334,18 +1325,14 @@ sameTypesGenericCrt gs@(_, _, leftGeneral, _) crt pos mp a@(NewTypeInstanceAnnot
     where ls = zipWithM (sameTypesGenericCrt gs crt pos mp) as1 as2
 sameTypesGenericCrt gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
     | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then success crt a else failout crt a b pos
-    | Map.size ps1 /= Map.size ps2 = failout crt a b pos
-    | isJust $ sequence ls = maybe (failout crt a b pos) (success crt) (StructAnnotation <$> sequence ls)
-    | otherwise = failout crt a b pos
+    | Map.keys ps1 /= Map.keys ps2 = failout crt a b pos
+    | isRight seq = case seq of
+        Right x -> Right $ StructAnnotation x
+        Left err -> failiure crt err
+    | otherwise = failiure crt $ fromLeft (error "I must have checked, this should be a left") seq
     where
-        ls = Map.mapWithKey (f ps2) ps1
-        f ps2 k v1 = 
-            case Map.lookup k ps2 of
-                Just v2
-                    -> case sameTypesGenericCrt gs crt pos mp v1 v2 of
-                        Right a -> Just a
-                        Left err -> Nothing
-                Nothing -> Nothing
+        seq = sequence ls
+        ls = Map.unionWith (\(Right a) (Right b) -> sameTypesGenericCrt gs crt pos mp a b) (Map.map Right ps1) (Map.map Right ps2)
 sameTypesGenericCrt gs crt pos mp a@(TypeUnion as) b@(TypeUnion bs) = do
     case mapM (f mp $ Set.toList as) (Set.toList bs) of
         Right s -> success crt $ TypeUnion $ Set.fromList s
@@ -1368,9 +1355,9 @@ sameTypesGenericCrt gs crt pos mp (Annotation id) b =
     case Map.lookup (LhsIdentifer id pos) mp of
         Just a -> sameTypesGenericCrt gs crt pos mp a b
         Nothing -> failiure crt $ NoTypeFound id pos
-sameTypesGenericCrt gs crt pos mp b (Annotation id) = 
+sameTypesGenericCrt gs crt pos mp a (Annotation id) = 
     case Map.lookup (LhsIdentifer id pos) mp of
-        Just a -> sameTypesGenericCrt gs crt pos mp a b
+        Just b -> sameTypesGenericCrt gs crt pos mp a b
         Nothing -> failiure crt $ NoTypeFound id pos
 sameTypesGenericCrt tgs@(_, sensitive, _, gs) crt pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
     | sensitive && id1 `Map.member` gs && id2 `Map.member` gs && id1 /= id2 = Left $ UnmatchedType a b pos
@@ -1542,8 +1529,12 @@ consistentTypesPass :: ConsistencyPass -> Node -> AnnotationState (Annotations (
 consistentTypesPass VerifyAssumptions (DeclN (Decl lhs rhs _ pos)) = (\a b m -> mergedTypeConcrete pos m <$> a <*> b)
     <$> getAnnotationState lhs <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
 consistentTypesPass RefineAssumtpions (DeclN (Decl lhs rhs _ pos)) = consistentTypesPass RefineAssumtpions rhs >>= \x -> makeUnionIfNotSame pos x (getAnnotationState lhs) lhs
-consistentTypesPass VerifyAssumptions (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
-    <$> getAssumptionType (Access access prop accPos) <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
+consistentTypesPass VerifyAssumptions (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = consistentTypesPass VerifyAssumptions rhs
+
+-- This check can be performed, but right now it fails in cases whenever cycles are created
+-- consistentTypesPass VerifyAssumptions (DeclN (Assign (LhsAccess access prop accPos) rhs pos)) = (\a b m -> join $ sameTypes pos m <$> a <*> b)
+--     <$> consistentTypesPass VerifyAssumptions (Access access prop accPos) <*> consistentTypesPass VerifyAssumptions rhs <*> getTypeMap
+
 consistentTypesPass RefineAssumtpions (DeclN (Assign lhs@(LhsAccess access prop accPos) rhs pos)) =
     do
         expcd <- consistentTypesPass RefineAssumtpions (Access access prop accPos)

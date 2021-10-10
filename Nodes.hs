@@ -27,7 +27,7 @@ data Annotation =
     | NewTypeAnnotation String [Annotation] (Map.Map Lhs Annotation)
     | NewTypeInstanceAnnotation String [Annotation]
     | TypeUnion (Set.Set Annotation)
-    
+
 data AnnotationNoImpl = 
     AnnotationNoImpl String
     | AnnotationLiteralNoImpl String
