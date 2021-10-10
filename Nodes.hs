@@ -396,7 +396,7 @@ primary :: TwoSets a -> Set.Set a
 primary (TwoSets set _) = set
 
 secondary :: TwoSets a -> Set.Set a
-secondary (TwoSets set _) = set
+secondary (TwoSets _ set) = set
 
 primaryMember :: Ord a => a -> TwoSets a -> Bool
 primaryMember k (TwoSets set _) = Set.member k set

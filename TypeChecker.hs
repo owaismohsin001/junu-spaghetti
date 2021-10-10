@@ -205,22 +205,26 @@ firstPreferablyDefinedRelation :: SourcePos
     -> Map.Map Lhs Annotation
     -> Set.Set Annotation
     -> TwoSets Annotation
+    -> Annotations Annotation
     -> Map.Map Annotation a
     -> Map.Map Annotation (Set.Set Annotation)
     -> Annotation
     -> Either ErrorType Annotation
-firstPreferablyDefinedRelation pos usts prevs defs mp rs k =
+firstPreferablyDefinedRelation pos usts prevs defs scope mp rs k =
     case Map.lookup k rs of
         Just s -> 
             if notnull stf then Right . defResIfNull $ inDefs stf 
             else if notnull deftf then Right . defResIfNull $ inDefs deftf
-            else if notnull prevs then Right . defResIfNull $ inDefs prevs
+            else if notnull prevs then Right . defResIfNull $ inSecondaryDefs prevs
+            else if notnull secondaryDeftf then Right . defResIfNull $ inSecondaryDefs secondaryDeftf
             else case defRes of
                     Right x -> Right x
-                    Left _ -> Right $ Set.elemAt 0 $ if notnull $ inDefs s then inDefs s else s
+                    Left _ -> Right . Set.elemAt 0 $ if notnull $ inDefs s then inDefs s else s
             where 
                 notnull = not . Set.null
                 deftf = Set.filter (flip (isPrmaryDefMember usts) defs) s
+                secondaryDeftf = Set.filter (flip (isSecondaryDefMember usts) defs) s
+                scopetf = Set.filter (`lookupInTypes` scope) s
                 stf = Set.filter (\x -> isJust (Map.lookup x mp)) s
 
                 defResIfNull s' = if notnull s' then Set.elemAt 0 s' else case defRes of
@@ -229,7 +233,7 @@ firstPreferablyDefinedRelation pos usts prevs defs mp rs k =
         Nothing -> defRes
         where 
             inDefs s = Set.filter (flip (isPrmaryDefMember usts) defs) s
-            inSecondaryDefs s = Set.filter (flip (isPrmaryDefMember usts) defs) s
+            inSecondaryDefs s = Set.filter (flip (isSecondaryDefMember usts) defs) s
             defRes = 
                 case Map.elems $ Map.filter (\s -> isDefMember usts k s && not (Set.disjoint (primary defs) s)) $ Map.mapWithKey Set.insert rs of
                     [] -> case Map.elems $ Map.filter (\s -> isDefMember usts k s && not (Set.disjoint (secondary defs) s)) $ Map.mapWithKey Set.insert rs of
@@ -274,7 +278,7 @@ substituteVariablesOptFilter pred pos defs anns rels mp usts n = evalState (go p
             Right retGen -> modify (retGen `Set.insert`) >> return (Right retGen)
             Left err -> return $ Left err
         where 
-            f gs x = case firstPreferablyDefinedRelation pos usts gs defs mp rels x of
+            f gs x = case firstPreferablyDefinedRelation pos usts gs defs anns mp rels x of
                 Right a -> Right a
                 Left err -> if lookupInTypes x anns then Right x else Left err
             g = join <$> (mapM (goConstraints pred rels mp) cns >>= (\case

@@ -134,7 +134,8 @@ let mlres = swapML(Tup(st, Tup(1, st.pet)))
 write("mlres is: ")
 println(mlres)
 
-let identity = (a: x{}) => { return a }
+let compose2 = (f: (a{}) -> b{}, g: (b{}) -> c{}) => return (x: a{}) => g(f(x))
+let identity = compose2((x: x{}) => x, (x: i{}) => x)
 
 open fst(s{.a: ay{}, .b: by{}}) => ay{} for s{.a: ay{}, .b: by{}}
 
