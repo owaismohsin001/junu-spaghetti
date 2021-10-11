@@ -237,7 +237,9 @@ firstPreferablyDefinedRelation pos usts prevs defs scope mp rs k =
             defRes = 
                 case Map.elems $ Map.filter (\s -> isDefMember usts k s && not (Set.disjoint (primary defs) s)) $ Map.mapWithKey Set.insert rs of
                     [] -> case Map.elems $ Map.filter (\s -> isDefMember usts k s && not (Set.disjoint (secondary defs) s)) $ Map.mapWithKey Set.insert rs of
-                        [] -> Left $ NoEstablishedRelationWith k pos
+                        [] -> 
+                            if isSecondaryDefMember usts k defs then Right k 
+                            else Left $ NoEstablishedRelationWith k pos
                         xs -> Right . Set.elemAt 0 . inSecondaryDefs $ head xs
                     xs -> Right . Set.elemAt 0 . inDefs $ head xs
 
