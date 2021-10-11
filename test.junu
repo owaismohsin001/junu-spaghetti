@@ -135,7 +135,10 @@ write("mlres is: ")
 println(mlres)
 
 let compose2 = (f: (a{}) -> b{}, g: (b{}) -> c{}) => return (x: a{}) => g(f(x))
-let identity = (x: x{}) => compose2((x: x{}) => x, (x: i{}) => x)(x)
+let identity = (x: x{}) => {
+    let f = compose2((x: x{}) => x, (x: i{}) => x)
+    return f(x)
+}
 
 open fst(s{.a: ay{}, .b: by{}}) => ay{} for s{.a: ay{}, .b: by{}}
 

@@ -376,7 +376,7 @@ getLookupTypeIfAvailable k = do
 changeType :: P.SourcePos -> TwoSets Annotation -> Annotations Annotation -> Annotation -> Annotation -> SubstituteState (Either ErrorType ())
 changeType pos defs anns k v = do
     (a, ((rel, mp), usts)) <- get
-    case substituteVariables pos defs anns rel mp usts v of
+    case substituteVariablesOptFilter False pos defs anns rel mp usts v of
         Right sub -> put (a, ((rel, Map.insert k sub mp), usts)) $> Right ()
         Left err -> return $ Left err
 
@@ -902,6 +902,13 @@ listAccess n = reverse $ go n where
     go (Access n lhs _) = lhs : listAccess n
     go Identifier{} = []
 
+-- makeImpl a b TypeUnion{} = a
+-- makeImpl a b (NewTypeInstanceAnnotation _ xs) = 
+--     if isJust $ find isTypeUnion xs then a else b where
+--     isTypeUnion TypeUnion{} = True
+--     isTypeUnion _ = False
+-- makeImpl a b _ = b
+
 makeImpl a b TypeUnion{} = a
 makeImpl a b (NewTypeInstanceAnnotation _ xs) = 
     if isJust $ find isTypeUnion xs then a else b where
@@ -1095,7 +1102,7 @@ getAssumptionType (FunctionDef args ret body pos) =
                             ) . isSearchable
                     put whole_old_ans
                     annotations <- getAnnotationsState
-                    return (makeFunAnnotation args . rigidizeAllFromScope annotations . unrigidizeTypeVariables mp <$> ntyp)
+                    return (rigidizeAllFromScope annotations . makeFunAnnotation args . unrigidizeTypeVariables mp <$> ntyp)
                 Left err -> return . Left $ err
     where
         isSearchable Annotation{} = False
@@ -1248,7 +1255,7 @@ mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
             go acc (h:t) =
                 let (hs, nohs) = partition (groupable h) t
                 in go ((h:hs):acc) nohs
-        groupable (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2
+        groupable (NewTypeInstanceAnnotation id1 as) (NewTypeInstanceAnnotation id2 bs) = id1 == id2 && length as == length bs
         groupable (FunctionAnnotation anns1 ret1) (FunctionAnnotation anns2 ret2) = length anns1 == length anns2
         groupable (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
         groupable a b = sameTypesBool pos mp a b
@@ -1531,7 +1538,7 @@ getFullAnnotation anns fid@(LhsIdentifer id pos) givenArgs = do
     mp <- getTypeMap
     case Map.lookup fid mp of
         Just x@(NewTypeAnnotation id args map) -> 
-            return $ substituteVariablesOptFilter False pos (f mp) anns Map.empty (Map.fromList $ zip args givenArgs) mp x
+            return $ substituteVariables pos (f mp) anns Map.empty (Map.fromList $ zip args givenArgs) mp x
         Just a -> return . Left $ NoTypeFound id pos
         Nothing -> return . Left $ NoTypeFound id pos
     where f mp = fromUnionLists (map (collectGenenrics mp) givenArgs, map (collectGenenricsHOF mp) givenArgs)
@@ -1750,7 +1757,7 @@ consistentTypesPass p (FunctionDef args ret body pos) =
                                     typ <- consistentTypesPass p ret
                                     put scope
                                     annotations <- getAnnotationsState
-                                    return . Right . makeFunAnnotation args . rigidizeAllFromScope annotations $ unrigidizeTypeVariables mp ret'
+                                    return . Right . rigidizeAllFromScope annotations . makeFunAnnotation args $ unrigidizeTypeVariables mp ret'
                                 Left err -> return $ Left err
                             Left err -> return $ Left err) =<< firstInferrableReturn pos body
                     Left err -> return $ Left err
