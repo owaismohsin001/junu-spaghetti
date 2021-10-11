@@ -242,13 +242,30 @@ firstPreferablyDefinedRelation pos usts prevs defs scope mp rs k =
                     xs -> Right . Set.elemAt 0 . inDefs $ head xs
 
 isDefMember :: UserDefinedTypes -> Annotation -> Set.Set Annotation -> Bool
-isDefMember usts a defs = rigidizeTypeVariables usts a `Set.member` defs || a `Set.member` defs
+isDefMember usts a defs = a `Set.member` defs || rigidizeTypeVariables usts a `Set.member` defs
 
 isPrmaryDefMember :: UserDefinedTypes -> Annotation -> TwoSets Annotation -> Bool
-isPrmaryDefMember usts a defs = rigidizeTypeVariables usts a `primaryMember` defs || a `primaryMember` defs
+isPrmaryDefMember usts a defs = a `primaryMember` defs || rigidizeTypeVariables usts a `primaryMember` defs
 
 isSecondaryDefMember :: UserDefinedTypes -> Annotation -> TwoSets Annotation -> Bool
-isSecondaryDefMember usts a defs = rigidizeTypeVariables usts a `secondaryMember` defs || a `secondaryMember` defs
+isSecondaryDefMember usts a defs = a `secondaryMember` defs || rigidizeTypeVariables usts a `secondaryMember` defs
+
+rigidizeAllConstraintsFromScope :: Annotations Annotation -> Constraint -> Constraint
+rigidizeAllConstraintsFromScope scp (ConstraintHas lhs cs) = ConstraintHas lhs $ rigidizeAllConstraintsFromScope scp cs 
+rigidizeAllConstraintsFromScope scp (AnnotationConstraint ann) = AnnotationConstraint $ rigidizeAllFromScope scp ann
+
+rigidizeAllFromScope :: Annotations Annotation -> Annotation -> Annotation
+rigidizeAllFromScope scp fid@(GenericAnnotation id cns) = 
+    (if lookupInTypes fid scp then RigidAnnotation else GenericAnnotation) id $ map (rigidizeAllConstraintsFromScope scp) cns
+rigidizeAllFromScope scp fid@(RigidAnnotation id cns) = RigidAnnotation id $ map (rigidizeAllConstraintsFromScope scp) cns
+rigidizeAllFromScope scp id@AnnotationLiteral{} = id
+rigidizeAllFromScope scp id@Annotation{} = id
+rigidizeAllFromScope scp (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id (map (rigidizeAllFromScope scp) anns) (Map.map (rigidizeAllFromScope scp) annMap)
+rigidizeAllFromScope scp (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id (map (rigidizeAllFromScope scp) anns)
+rigidizeAllFromScope scp (FunctionAnnotation args ret) = FunctionAnnotation (map (rigidizeAllFromScope scp) args) (rigidizeAllFromScope scp ret)
+rigidizeAllFromScope scp (StructAnnotation ms) = StructAnnotation $ Map.map (rigidizeAllFromScope scp) ms
+rigidizeAllFromScope scp (TypeUnion ts) = TypeUnion $ Set.map (rigidizeAllFromScope scp) ts
+rigidizeAllFromScope scp OpenFunctionAnnotation{} = error "Can't use rigidizeVariables with open functions"
 
 substituteVariablesOptFilter :: Bool
     -> SourcePos
@@ -1077,7 +1094,8 @@ getAssumptionType (FunctionDef args ret body pos) =
                             else typ
                             ) . isSearchable
                     put whole_old_ans
-                    return (makeFunAnnotation args . unrigidizeTypeVariables mp <$> ntyp)
+                    annotations <- getAnnotationsState
+                    return (makeFunAnnotation args . rigidizeAllFromScope annotations . unrigidizeTypeVariables mp <$> ntyp)
                 Left err -> return . Left $ err
     where
         isSearchable Annotation{} = False
@@ -1095,22 +1113,22 @@ getAssumptionType (FunctionDef args ret body pos) =
 getAssumptionType (Call e args pos) = (\case
                     Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
-                        anns <- sequence <$> mapM consistentTypes args
                         annotations <- getAnnotationsState
+                        anns <- (map (rigidizeAllFromScope annotations) <$>) . sequence <$> mapM consistentTypes args
                         case anns of
                             Right anns -> let 
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns)
                                 (spec, rel) = getPartialNoUnderScoreSpecificationRules pos defs annotations Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) in
                                 case substituteVariables pos defs annotations rel spec mp ret of
                                     Right ret' -> case specify pos defs annotations Map.empty mp fann (FunctionAnnotation anns ret') of
-                                        Right _ -> return $ Right ret'
+                                        Right _ -> return . Right $ rigidizeAllFromScope annotations ret'
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
                             Left err -> return $ Left err
                     Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> do
                         mp <- getTypeMap
-                        anns <- sequence <$> mapM consistentTypes args
                         annotations <- getAnnotationsState
+                        anns <- (map (rigidizeAllFromScope annotations) <$>) . sequence <$> mapM consistentTypes args
                         case anns of
                             Right anns -> let
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns)
@@ -1120,7 +1138,7 @@ getAssumptionType (Call e args pos) = (\case
                                         Right (_, base, _) -> case Map.lookup ft base of
                                             Just a -> maybe 
                                                     (return . Left $ NoInstanceFound opf a pos) 
-                                                    (const . return $ Right ret')
+                                                    (const . return . Right $ rigidizeAllFromScope annotations ret')
                                                     (find (\b -> specifyTypesBool pos defs annotations base mp b a) impls)
                                             Nothing -> return . Left $ NotOccuringTypeOpenFunction ft pos
                                         Left err -> return $ Left err
@@ -1709,9 +1727,10 @@ consistentTypesPass p (FunctionDef args ret body pos) =
                 xs <- sequence <$> mapM (consistentTypesPass p) body
                 s <- getAnnotationState (LhsIdentifer "return" pos)
                 put scope
+                annotations <- getAnnotationsState
                 case s of
                     Right ret' -> case xs of
-                        Right _ -> return (sameTypes pos mp (makeFunAnnotation args $ unrigidizeTypeVariables mp ret) (makeFunAnnotation args $ unrigidizeTypeVariables mp ret'))
+                        Right _ -> return $ rigidizeAllFromScope annotations <$> sameTypes pos mp (makeFunAnnotation args $ unrigidizeTypeVariables mp ret) (makeFunAnnotation args $ unrigidizeTypeVariables mp ret')
                         Left err -> return . Left $ err
                     Left err -> return $ Left err
             Nothing -> do
@@ -1730,7 +1749,8 @@ consistentTypesPass p (FunctionDef args ret body pos) =
                                 Right (Finalizeable _ ret') -> do
                                     typ <- consistentTypesPass p ret
                                     put scope
-                                    return $ Right $ makeFunAnnotation args $ unrigidizeTypeVariables mp ret'
+                                    annotations <- getAnnotationsState
+                                    return . Right . makeFunAnnotation args . rigidizeAllFromScope annotations $ unrigidizeTypeVariables mp ret'
                                 Left err -> return $ Left err
                             Left err -> return $ Left err) =<< firstInferrableReturn pos body
                     Left err -> return $ Left err
@@ -1740,22 +1760,22 @@ consistentTypesPass p (Return n pos) = consistentTypesPass p n >>= \x -> makeUni
 consistentTypesPass p (Call e args pos) =  (\case 
                     Right fann@(FunctionAnnotation fargs ret) -> do
                         mp <- getTypeMap
-                        anns <- sequence <$> mapM (consistentTypesPass p) args
                         annotations <- getAnnotationsState
+                        anns <- (map (rigidizeAllFromScope annotations) <$>) . sequence <$> mapM (consistentTypesPass p) args
                         case anns of
-                            Right anns -> let 
+                            Right anns -> let
                                 (spec, rels) = getPartialNoUnderScoreSpecificationRules pos defs annotations Map.empty mp fann (FunctionAnnotation anns (AnnotationLiteral "_")) 
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns) in
                                 case substituteVariables pos defs annotations rels spec mp ret of
                                     Right ret' -> case specify pos defs annotations Map.empty mp fann (FunctionAnnotation anns ret') of
-                                        Right r -> return $ Right ret'
+                                        Right r -> return . Right $ rigidizeAllFromScope annotations ret'
                                         Left err -> return $ Left err
                                     Left err -> return $ Left err
                             Left err -> return $ Left err
                     Right opf@(OpenFunctionAnnotation oanns oret ft impls) -> do
                         mp <- getTypeMap
                         annotations <- getAnnotationsState
-                        anns <- sequence <$> mapM (consistentTypesPass p) args
+                        anns <- (map (rigidizeAllFromScope annotations) <$>) . sequence <$> mapM (consistentTypesPass p) args
                         case anns of
                             Right anns -> let 
                                 defs = fromUnionLists (map (collectGenenrics mp) anns, map (collectGenenricsHOF mp) anns)
@@ -1765,7 +1785,7 @@ consistentTypesPass p (Call e args pos) =  (\case
                                         Right (_, base, _) -> case Map.lookup ft base of
                                             Just a -> maybe 
                                                     (return . Left $ NoInstanceFound opf a pos) 
-                                                    (const . return $ Right ret')
+                                                    (const . return . Right $ rigidizeAllFromScope annotations ret')
                                                     (find (\b -> specifyTypesBool pos defs annotations base mp b a) impls)
                                             Nothing -> return . Left $ NotOccuringTypeOpenFunction ft pos
                                         Left err -> return $ Left err
