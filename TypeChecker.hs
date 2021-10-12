@@ -1257,7 +1257,7 @@ mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
             go acc (h:t) =
                 let (hs, nohs) = partition (groupable h) t
                 in go ((h:hs):acc) nohs
-        groupable (NewTypeInstanceAnnotation id1 as) (NewTypeInstanceAnnotation id2 bs) = id1 == id2 && length as == length bs
+        groupable (NewTypeInstanceAnnotation id1 as) (NewTypeInstanceAnnotation id2 bs) = id1 == id2
         groupable (FunctionAnnotation anns1 ret1) (FunctionAnnotation anns2 ret2) = length anns1 == length anns2
         groupable (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
         groupable a b = sameTypesBool pos mp a b
@@ -1272,12 +1272,18 @@ mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
         where ls = zipWith (mergedType gs crt pos mp) (as ++ [ret1]) (bs ++ [ret2])
     go gs crt pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
         | id1 /= id2 = createUnion a b
-        | otherwise = mergedType gs crt pos mp (NewTypeInstanceAnnotation id1 anns1) b
+        | otherwise = case bx of 
+            Right (NewTypeAnnotation id2 anns2 _) -> mergedType gs crt pos mp a (NewTypeInstanceAnnotation id2 anns2)
+            Right a -> error $ "Bug: Look into how full annotation function returns " ++ show a
+            Left err -> createUnion a b 
+        where
+            a = NewTypeInstanceAnnotation id1 anns1
+            bx = fullAnotationFromInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) mp b
     go gs crt pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
         | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 ls
         | e1 == e2 && length as1 < length as2 = case flip (mergedType gs crt pos mp) b <$> fullAnotationFromInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) mp a of
             Right a -> a
-            Left  _ -> createUnion a b
+            Left err -> createUnion a b
         | otherwise = createUnion a b
         where ls = zipWith (mergedType gs crt pos mp) as1 as2
     go gs crt pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
