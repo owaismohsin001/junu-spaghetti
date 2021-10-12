@@ -927,12 +927,12 @@ matchingUserDefinedType pos defs anns usts t = (\(LhsIdentifer id _, _) -> Just 
 evaluateTExpr :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> State Annotation (Either ErrorType Annotation)
 evaluateTExpr pos usts (IsType _ ann) = do
     typ <- get 
-    case filterUnion pos usts (\a b -> not $ excludeSameTypes pos usts a b) ann typ of
+    case intersectTypes pos usts ann typ of
         Right typ' -> put typ' $> Right typ'
         Left err -> return $ Left err
 evaluateTExpr pos usts (NotIsType _ ann) = do
     typ <- get 
-    case filterUnion pos usts (excludeSameTypes pos usts) ann typ of
+    case differenceTypes pos usts ann typ of
         Right typ' -> put typ' $> Right typ'
         Left err -> return $ Left err
 evaluateTExpr pos usts (NegateTypeDeduction tExpr) = do
@@ -1496,6 +1496,7 @@ filterUnion pos usts f _a _b =
     in case b of
         TypeUnion{} -> go pos usts f a b 
         NewTypeInstanceAnnotation{} -> go pos usts f a b
+        StructAnnotation{} -> go pos usts f a b
         _ -> if f a b then Left $ UnmatchedType a b pos else Right a
     where
         go :: SourcePos -> UserDefinedTypes -> (Annotation -> Annotation -> Bool) -> Annotation -> Annotation -> Either ErrorType Annotation
@@ -1521,6 +1522,9 @@ filterUnion pos usts f _a _b =
 
 excludeSameTypes pos usts a b = any isRight xs where
     xs = [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (TwoSets (collectGenenrics usts a) (collectGenenrics usts a)) (Annotations (Map.empty, Set.empty) Nothing) Map.empty usts a b) $> b]
+
+intersectTypes pos usts = filterUnion pos usts (\a b -> not $ excludeSameTypes pos usts a b)
+differenceTypes pos usts = filterUnion pos usts (excludeSameTypes pos usts)
 
 accessNewType anns givenArgs f fid@(LhsIdentifer id pos) =
     (\case
