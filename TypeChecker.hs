@@ -17,6 +17,7 @@ import Data.Maybe
 import Data.Tuple
 import qualified Parser
 import Nodes
+import Control.Exception.Base (TypeError(TypeError))
 
 insertAnnotation :: Lhs -> Finalizeable Annotation -> AnnotationState (Annotations (Finalizeable Annotation)) Annotation
 insertAnnotation k v@(Finalizeable _ a) = do
@@ -926,8 +927,8 @@ matchingUserDefinedType pos defs anns usts t = (\(LhsIdentifer id _, _) -> Just 
 
 evaluateTExpr :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> State Annotation (Either ErrorType Annotation)
 evaluateTExpr pos usts (IsType _ ann) = do
-    typ <- get 
-    case intersectTypes pos usts ann typ of
+    typ <- get
+    case intersectTypes True pos usts ann typ of
         Right typ' -> put typ' $> Right typ'
         Left err -> return $ Left err
 evaluateTExpr pos usts (NotIsType _ ann) = do
@@ -1475,6 +1476,91 @@ findFromUserDefinedTypes pos id usts = case Map.lookup (LhsIdentifer id pos) ust
     Just x -> Right x
     Nothing -> Left $ NoTypeFound id pos
 
+intersectTypes :: Bool -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation
+intersectTypes _ pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
+    if a == b then Right b else Left $ UnmatchedType a b pos
+intersectTypes gs pos mp a@(FunctionAnnotation as ret1) b@(FunctionAnnotation bs ret2) = 
+    if length as == length bs then (\xs -> FunctionAnnotation (init xs) (last xs)) <$> ls
+    else Left $ UnmatchedType a b pos
+    where ls = zipWithM (intersectTypes gs pos mp) (as ++ [ret1]) (bs ++ [ret2])
+intersectTypes leftGeneral pos mp a@(NewTypeAnnotation id1 anns1 _) b@(NewTypeInstanceAnnotation id2 anns2) 
+    | id1 /= id2 = Left $ UnmatchedType a b pos
+    | otherwise = intersectTypes leftGeneral pos mp (NewTypeInstanceAnnotation id1 anns1) b
+intersectTypes leftGeneral pos mp a@(NewTypeInstanceAnnotation id1 anns1) b@(NewTypeAnnotation id2 anns2 _)
+    | id1 /= id2 = Left $ UnmatchedType a b pos
+    | leftGeneral = intersectTypes leftGeneral pos mp b (NewTypeInstanceAnnotation id1 anns1)
+    | otherwise = Left $ UnmatchedType a b pos
+intersectTypes leftGeneral pos mp a@(NewTypeInstanceAnnotation e1 as1) b@(NewTypeInstanceAnnotation e2 as2)
+    | e1 == e2 && length as1 == length as2 = NewTypeInstanceAnnotation e1 <$> ls
+    | e1 == e2 && length as1 < length as2 && isGeneralizedInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) a mp = flip (intersectTypes leftGeneral pos mp) b =<< fullAnotationFromInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) mp a
+    | e1 == e2 && length as1 > length as2 && isGeneralizedInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) b mp && leftGeneral = intersectTypes leftGeneral pos mp a =<< fullAnotationFromInstanceFree pos (Annotations (Map.empty, Set.empty) Nothing) mp b
+    | otherwise = Left $ UnmatchedType a b pos 
+    where ls = zipWithM (intersectTypes leftGeneral pos mp) as1 as2
+intersectTypes gs pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
+    | Map.empty == ps1 || Map.empty == ps2 = if ps1 == ps2 then Right a else Left $ UnmatchedType a b pos
+    | Map.keys ps1 /= Map.keys ps2 = Left $ UnmatchedType a b pos
+    | isRight seq = case seq of
+        Right x -> Right $ StructAnnotation x
+        Left err -> Left err
+    | otherwise = Left $ fromLeft (error "I must have checked, this should be a left") seq
+    where
+        seq = sequence ls
+        ls = Map.unionWith (\(Right a) (Right b) -> intersectTypes gs pos mp a b) (Map.map Right ps1) (Map.map Right ps2)
+intersectTypes gs pos mp a@(TypeUnion as) b@(TypeUnion bs) = case mutuals (Set.toList as) (Set.toList bs) of
+    [] -> Left $ UnmatchablePredicates a pos 
+    [a] -> Right a
+    xs -> Right . TypeUnion $ Set.fromList xs
+    where
+    mutuals [] _ = []
+    mutuals (x : xs) ys = case has x ys of
+        Just x -> x : mutuals xs (filter (sameTypesVariant pos mp x) ys)
+        Nothing -> mutuals xs ys
+    has :: Annotation -> [Annotation] -> Maybe Annotation
+    has x [] = Nothing
+    has x (y:ys) = case intersectTypes gs pos mp x y of 
+        Right x -> Just x
+        Left err -> Nothing
+intersectTypes gs pos mp a@(TypeUnion st) b =
+    case sequence . filter isRight . map (intersectTypes gs pos mp b) $ Set.toList st of
+        Right [] -> Left $ UnmatchablePredicates a pos
+        Right [a] -> Right a
+        Right xs -> Right . TypeUnion $ Set.fromList xs
+        Left err -> Left err
+intersectTypes gs pos mp a b@(TypeUnion st) = intersectTypes gs pos mp b a
+intersectTypes gs pos mp (Annotation id1) b@(Annotation id2)
+    | id1 == id2 = Right b
+    | otherwise = case Map.lookup (LhsIdentifer id1 pos) mp of
+        Just a -> case Map.lookup (LhsIdentifer id2 pos) mp of
+            Just b -> intersectTypes gs pos mp a b
+            Nothing -> Left $ NoTypeFound id2 pos
+        Nothing -> Left $ NoTypeFound id1 pos
+intersectTypes gs pos mp (Annotation id) b = 
+    case Map.lookup (LhsIdentifer id pos) mp of
+        Just a -> intersectTypes gs pos mp a b
+        Nothing -> Left $ NoTypeFound id pos
+intersectTypes gs pos mp a (Annotation id) = 
+    case Map.lookup (LhsIdentifer id pos) mp of
+        Just b -> intersectTypes gs pos mp a b
+        Nothing -> Left $ NoTypeFound id pos
+intersectTypes gs pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)=
+    specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b *> Right b
+intersectTypes gs pos mp a@(GenericAnnotation id1 cs1) b@(RigidAnnotation id2 cs2) = 
+    specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b $> a
+intersectTypes gs pos mp a@(RigidAnnotation id1 cs1) b@(GenericAnnotation id2 cs2) = 
+    intersectTypes gs pos mp (GenericAnnotation id1 cs1) (RigidAnnotation id2 cs2) $> b
+intersectTypes gs pos mp a@(RigidAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
+    | id1 == id2 = specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b *> Right a 
+    | otherwise = Left $ UnmatchedType a b pos
+intersectTypes gs pos mp a@(GenericAnnotation _ acs) b = 
+    specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b *> Right b
+intersectTypes gs pos mp b a@(GenericAnnotation _ acs) = 
+    specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty b a *> Right a
+intersectTypes gs pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
+    (\xs -> OpenFunctionAnnotation (init xs) (last xs) forType impls) <$> zipWithM (intersectTypes gs pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2]) where 
+intersectTypes gs pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
+    (\xs -> FunctionAnnotation (init xs) (last xs)) <$> zipWithM (intersectTypes gs pos mp) (anns1 ++ [ret1]) (args ++ [ret2]) where
+intersectTypes _ pos _ a b = Left $ UnmatchedType a b pos
+
 filterUnion :: SourcePos
     -> UserDefinedTypes
     -> (Annotation -> Annotation -> Bool)
@@ -1496,7 +1582,6 @@ filterUnion pos usts f _a _b =
     in case b of
         TypeUnion{} -> go pos usts f a b 
         NewTypeInstanceAnnotation{} -> go pos usts f a b
-        StructAnnotation{} -> go pos usts f a b
         _ -> if f a b then Left $ UnmatchedType a b pos else Right a
     where
         go :: SourcePos -> UserDefinedTypes -> (Annotation -> Annotation -> Bool) -> Annotation -> Annotation -> Either ErrorType Annotation
@@ -1520,11 +1605,10 @@ filterUnion pos usts f _a _b =
                     Left err -> Left err
         go pos usts f a b = if f a b then Right a else Left $ UnmatchedType a b pos
 
-excludeSameTypes pos usts a b = any isRight xs where
+sameTypesVariant pos usts a b = any isRight xs where
     xs = [sameTypes pos usts b a $> b, sameTypes pos usts a b $> b, (fst <$> specify pos (TwoSets (collectGenenrics usts a) (collectGenenrics usts a)) (Annotations (Map.empty, Set.empty) Nothing) Map.empty usts a b) $> b]
 
-intersectTypes pos usts = filterUnion pos usts (\a b -> not $ excludeSameTypes pos usts a b)
-differenceTypes pos usts = filterUnion pos usts (excludeSameTypes pos usts)
+differenceTypes pos usts = filterUnion pos usts (sameTypesVariant pos usts)
 
 accessNewType anns givenArgs f fid@(LhsIdentifer id pos) =
     (\case
