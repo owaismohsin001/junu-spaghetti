@@ -1605,7 +1605,7 @@ diffTypes gs pos mp a@(TypeUnion as) b@(TypeUnion bs) = case xs of
     xs = nonMutuals (Set.toList as) (Set.toList bs)
 diffTypes gs pos mp a@(TypeUnion st) b =
     let
-        (unions, simples) = partition isUnion . Set.toList . Set.map snd . Set.filter pred $ Set.map (\x -> (sameTypesVariant pos mp b x, x)) st 
+        (unions, simples) = partition isUnionDeep . Set.toList . Set.map snd . Set.filter pred $ Set.map (\x -> (sameTypesVariant pos mp b x, x)) st 
         ms = map (\x -> (if similarStructure b x then diffTypes gs pos mp b x else sameTypesVariantValued pos mp b x, x)) unions
         unions' = fromRight (error "This should never happen") . mapM fst $ filter (isRight . fst) ms
         xs = Set.fromList $ unions' ++ simples in
@@ -1614,8 +1614,21 @@ diffTypes gs pos mp a@(TypeUnion st) b =
     where
         sameTypesVariantValued pos mp b x = 
             if sameTypesVariant pos mp b x then Left $ UnmatchablePredicates b pos else Right x
-        pred (b, v) = (isUnion v && b) || not b
-        isUnion = makeImpl True False
+        pred (b, v) = (isUnionDeep v && b) || not b
+
+        isUnionDeepConstraint (ConstraintHas _ cn) = isUnionDeepConstraint cn
+        isUnionDeepConstraint (AnnotationConstraint ann) = isUnionDeep ann
+
+        isUnionDeep Annotation{} = False
+        isUnionDeep AnnotationLiteral{} = False
+        isUnionDeep (StructAnnotation mp) = or $ Map.map isUnionDeep mp
+        isUnionDeep (FunctionAnnotation anns ret) = any isUnionDeep $ ret:anns
+        isUnionDeep (OpenFunctionAnnotation anns ret ftr _) = any isUnionDeep $ ret:ftr:anns
+        isUnionDeep (NewTypeInstanceAnnotation _ anns) = any isUnionDeep anns
+        isUnionDeep TypeUnion{} = True
+        isUnionDeep (GenericAnnotation _ cns) = any isUnionDeepConstraint cns
+        isUnionDeep (RigidAnnotation _ cns) = any isUnionDeepConstraint cns
+        isUnionDeep (NewTypeAnnotation _ anns _) = any isUnionDeep anns
 
         similarStructure (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
         similarStructure (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2
