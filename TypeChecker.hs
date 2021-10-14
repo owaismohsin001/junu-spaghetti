@@ -1604,12 +1604,22 @@ diffTypes gs pos mp a@(TypeUnion as) b@(TypeUnion bs) = case xs of
         Left err -> has x ys
     xs = nonMutuals (Set.toList as) (Set.toList bs)
 diffTypes gs pos mp a@(TypeUnion st) b =
-    case sequence xs of
-        Right [] -> Left $ UnmatchablePredicates a pos
-        Right xs -> Right . foldr1 (mergedTypeConcrete pos mp) $ Set.fromList xs
-        Left err -> Left err
-    where xs = filter isRight . map (\x -> 
-            if sameTypesVariant pos mp b x then Left $ UnmatchablePredicates a pos else Right x) $ Set.toList st
+    let
+        (unions, simples) = partition isUnion . Set.toList . Set.map snd . Set.filter pred $ Set.map (\x -> (sameTypesVariant pos mp b x, x)) st 
+        ms = map (\x -> (if similarStructure b x then diffTypes gs pos mp b x else sameTypesVariantValued pos mp b x, x)) unions
+        unions' = fromRight (error "This should never happen") . mapM fst $ filter (isRight . fst) ms
+        xs = Set.fromList $ unions' ++ simples in
+        if Set.null xs then Left $ UnmatchablePredicates a pos
+        else Right $ foldr1 (mergedTypeConcrete pos mp) xs
+    where
+        sameTypesVariantValued pos mp b x = 
+            if sameTypesVariant pos mp b x then Left $ UnmatchablePredicates b pos else Right x
+        pred (b, v) = (isUnion v && b) || not b
+        isUnion = makeImpl True False
+
+        similarStructure (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
+        similarStructure (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2
+        similarStructure _ _ = False
 diffTypes gs pos mp a b@(TypeUnion st) = diffTypes gs pos mp b a
 diffTypes gs pos mp (Annotation id1) b@(Annotation id2)
     | id1 == id2 = Right b
