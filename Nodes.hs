@@ -71,6 +71,7 @@ instance Show Annotation where
     show (TypeUnion as) = "(" ++ intercalate " | " (map show (Set.toList as)) ++ ")"
 
 data ConsistencyPass = RefineAssumtpions | VerifyAssumptions deriving(Eq)
+data Operation = Intersection | Difference deriving(Show, Eq)
 
 data LhsNoPos = 
     LhsIdentiferNoPos String 
