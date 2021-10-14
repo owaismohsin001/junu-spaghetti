@@ -905,13 +905,6 @@ listAccess n = reverse $ go n where
     go (Access n lhs _) = lhs : listAccess n
     go Identifier{} = []
 
--- makeImpl a b TypeUnion{} = a
--- makeImpl a b (NewTypeInstanceAnnotation _ xs) = 
---     if isJust $ find isTypeUnion xs then a else b where
---     isTypeUnion TypeUnion{} = True
---     isTypeUnion _ = False
--- makeImpl a b _ = b
-
 makeImpl a b TypeUnion{} = a
 makeImpl a b (NewTypeInstanceAnnotation _ xs) = 
     if isJust $ find isTypeUnion xs then a else b where
@@ -1476,6 +1469,23 @@ findFromUserDefinedTypes pos id usts = case Map.lookup (LhsIdentifer id pos) ust
     Just x -> Right x
     Nothing -> Left $ NoTypeFound id pos
 
+isUnionDeepConstraint :: Constraint -> Bool
+isUnionDeepConstraint (ConstraintHas _ cn) = isUnionDeepConstraint cn
+isUnionDeepConstraint (AnnotationConstraint ann) = isUnionDeep ann
+
+isUnionDeep :: Annotation -> Bool
+isUnionDeep Annotation{} = False
+isUnionDeep AnnotationLiteral{} = False
+isUnionDeep (StructAnnotation mp) = or $ Map.map isUnionDeep mp
+isUnionDeep (FunctionAnnotation anns ret) = any isUnionDeep $ ret:anns
+isUnionDeep (OpenFunctionAnnotation anns ret ftr _) = any isUnionDeep $ ret:ftr:anns
+isUnionDeep (NewTypeInstanceAnnotation _ anns) = any isUnionDeep anns
+isUnionDeep TypeUnion{} = True
+isUnionDeep (GenericAnnotation _ cns) = any isUnionDeepConstraint cns
+isUnionDeep (RigidAnnotation _ cns) = any isUnionDeepConstraint cns
+isUnionDeep (NewTypeAnnotation _ anns _) = any isUnionDeep anns
+
+
 operationTypes :: Bool -> Operation -> P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Either ErrorType Annotation
 operationTypes _ op pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
     if a == b then Right b else Left $ UnmatchedType a b pos
@@ -1544,20 +1554,6 @@ operationTypes gs Difference pos mp a@(TypeUnion st) b =
         sameTypesVariantValued pos mp b x = 
             if sameTypesVariant pos mp b x then Left $ UnmatchablePredicates b pos else Right x
         pred (b, v) = (isUnionDeep v && b) || not b
-
-        isUnionDeepConstraint (ConstraintHas _ cn) = isUnionDeepConstraint cn
-        isUnionDeepConstraint (AnnotationConstraint ann) = isUnionDeep ann
-
-        isUnionDeep Annotation{} = False
-        isUnionDeep AnnotationLiteral{} = False
-        isUnionDeep (StructAnnotation mp) = or $ Map.map isUnionDeep mp
-        isUnionDeep (FunctionAnnotation anns ret) = any isUnionDeep $ ret:anns
-        isUnionDeep (OpenFunctionAnnotation anns ret ftr _) = any isUnionDeep $ ret:ftr:anns
-        isUnionDeep (NewTypeInstanceAnnotation _ anns) = any isUnionDeep anns
-        isUnionDeep TypeUnion{} = True
-        isUnionDeep (GenericAnnotation _ cns) = any isUnionDeepConstraint cns
-        isUnionDeep (RigidAnnotation _ cns) = any isUnionDeepConstraint cns
-        isUnionDeep (NewTypeAnnotation _ anns _) = any isUnionDeep anns
 
         similarStructure (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
         similarStructure (NewTypeInstanceAnnotation id1 _) (NewTypeInstanceAnnotation id2 _) = id1 == id2

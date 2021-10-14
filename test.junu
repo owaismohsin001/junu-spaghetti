@@ -163,10 +163,11 @@ write("idres is: ")
 println(idres)
 
 let ftr = (a: String, b: {name: String, species: String} | Pet | Person) => String {
-    if b notis Person {
-        return b.species + " " + b.name
+    let bt = Tup(Tup(b, b), b)
+    if bt notis Tup(Tup(Person, Person), Person) {
+        return bt.a.a.species + " " + bt.a.a.name
     } else {
-        return b.pet.species + " " + b.name
+        return bt.a.a.pet.species + " " + bt.a.a.name
     }
     return b.name + a
 }
