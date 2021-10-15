@@ -1516,32 +1516,44 @@ operationTypes gs op pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
     where
         seq = sequence ls
         ls = Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2)
-operationTypes gs op@Intersection pos mp a@(TypeUnion as) b@(TypeUnion bs) = case mutuals (Set.toList as) (Set.toList bs) of
+operationTypes gs op@Intersection pos mp a@(TypeUnion as) b@(TypeUnion bs) = case xs of
     [] -> Left $ UnmatchablePredicates a pos 
     [a] -> Right a
     xs -> Right . foldr1 (mergedTypeConcrete pos mp) $ Set.fromList xs
     where
-    mutuals [] _ = []
-    mutuals (x : xs) ys = case has x ys of
-        Just x -> x : mutuals xs (filter (sameTypesVariant pos mp x) ys)
-        Nothing -> mutuals xs ys
-    has :: Annotation -> [Annotation] -> Maybe Annotation
-    has x [] = Nothing
-    has x (y:ys) = case operationTypes gs op pos mp x y of 
-        Right x -> Just x
-        Left err -> Nothing
+        xs = mutuals (Set.toList as) (Set.toList bs)
+        mutuals [] _ = []
+        mutuals (x : xs) ys = case has x ys of
+            Just x -> x : mutuals xs (filter (not . sameTypesVariant pos mp x) ys)
+            Nothing -> mutuals xs ys
+        has :: Annotation -> [Annotation] -> Maybe Annotation
+        has x [] = Nothing
+        has x (y:ys) = case operationTypes gs op pos mp x y of 
+            Right x -> Just x
+            Left err -> has x ys
 operationTypes gs Difference pos mp a@(TypeUnion as) b@(TypeUnion bs) = case xs of
     [] -> Left $ UnmatchablePredicates a pos 
     [a] -> Right a
     xs -> Right . foldr1 (mergedTypeConcrete pos mp) $ Set.fromList xs
     where
-    nonMutuals xs ys = filter (\y -> isNothing $ has y xs) ys
-    has :: Annotation -> [Annotation] -> Maybe Annotation
-    has x [] = Nothing
-    has x (y:ys) = case operationTypes gs Difference pos mp x y of
-        Right x -> Just x
-        Left err -> has x ys
-    xs = nonMutuals (Set.toList as) (Set.toList bs)
+        nonMutuals xs ys = 
+            map (\(Just x) -> x) $ filter isJust $ map (\y -> if isUnionDeep y then y `has1` xs else y `has2` xs) ys
+        xs = nonMutuals (Set.toList as) (Set.toList bs)
+
+        sameTypesVariantValued pos mp b x = 
+            if sameTypesVariant pos mp b x then Right x else Left $ UnmatchablePredicates b pos
+
+        has1 :: Annotation -> [Annotation] -> Maybe Annotation
+        has1 x [] = Nothing
+        has1 x (y:ys) = case operationTypes gs Difference pos mp x y of
+            Right x -> Just x
+            Left err -> has1 x ys
+
+        has2 :: Annotation -> [Annotation] -> Maybe Annotation
+        has2 x [] = Just x
+        has2 x (y:ys) = case sameTypesVariantValued pos mp x y of
+            Right x -> Nothing
+            Left err -> has2 x ys
 operationTypes gs Difference pos mp a@(TypeUnion st) b =
     let
         (unions, simples) = partition isUnionDeep . Set.toList . Set.map snd . Set.filter pred $ Set.map (\x -> (sameTypesVariant pos mp b x, x)) st 
