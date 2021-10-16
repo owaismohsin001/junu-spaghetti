@@ -1593,28 +1593,28 @@ operationTypes gs op pos mp a (Annotation id) =
         Just b -> operationTypes gs op pos mp a b
         Nothing -> Left $ NoTypeFound id pos
 operationTypes gs op pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
-    | Map.keys ps1 == Map.keys ps2 = GenericAnnotation id2 <$> psw
+    | id1 == id2 && Map.keys ps1 == Map.keys ps2 = GenericAnnotation id2 <$> psw
     | otherwise = Left $ UnmatchedType a b pos
     where
         ps1 = toConstraintMap cs1
         ps2 = toConstraintMap cs2
         psw = fromConstraintMap <$> sequence (Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2))
 operationTypes gs op pos mp a@(GenericAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
-    | Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
+    | id1 == id2 && Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
     | otherwise = Left $ UnmatchedType a b pos
     where
         ps1 = toConstraintMap cs1
         ps2 = toConstraintMap cs2
         psw = fromConstraintMap <$> sequence (Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2))
 operationTypes gs op pos mp a@(RigidAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
-    | Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
+    | id1 == id2 && Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
     | otherwise = Left $ UnmatchedType a b pos
     where
         ps1 = toConstraintMap cs1
         ps2 = toConstraintMap cs2
         psw = fromConstraintMap <$> sequence (Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2))
 operationTypes gs op pos mp a@(RigidAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
-    | Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
+    | id1 == id2 && Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
     | otherwise = Left $ UnmatchedType a b pos
     where
         ps1 = toConstraintMap cs1
@@ -1652,6 +1652,8 @@ differenceTypes pos usts _a _b =
         TypeUnion{} -> diffTypes True pos usts a b 
         NewTypeInstanceAnnotation{} -> diffTypes True pos usts a b
         StructAnnotation{} -> diffTypes True pos usts a b
+        GenericAnnotation{} -> diffTypes True pos usts a b
+        RigidAnnotation{} -> diffTypes True pos usts a b
         _ -> if sameTypesVariant pos usts a b then Left $ UnmatchedType a b pos else Right a
 
 accessNewType anns givenArgs f fid@(LhsIdentifer id pos) =
