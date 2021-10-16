@@ -1592,23 +1592,42 @@ operationTypes gs op pos mp a (Annotation id) =
     case Map.lookup (LhsIdentifer id pos) mp of
         Just b -> operationTypes gs op pos mp a b
         Nothing -> Left $ NoTypeFound id pos
-operationTypes gs op pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)=
-    specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b *> Right b
-operationTypes gs op pos mp a@(GenericAnnotation id1 cs1) b@(RigidAnnotation id2 cs2) = 
-    specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b $> a
-operationTypes gs op pos mp a@(RigidAnnotation id1 cs1) b@(GenericAnnotation id2 cs2) = 
-    operationTypes gs op pos mp (GenericAnnotation id1 cs1) (RigidAnnotation id2 cs2) $> b
-operationTypes gs op pos mp a@(RigidAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
-    | id1 == id2 = specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b *> Right a 
+operationTypes gs op pos mp a@(GenericAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
+    | Map.keys ps1 == Map.keys ps2 = GenericAnnotation id2 <$> psw
     | otherwise = Left $ UnmatchedType a b pos
+    where
+        ps1 = toConstraintMap cs1
+        ps2 = toConstraintMap cs2
+        psw = fromConstraintMap <$> sequence (Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2))
+operationTypes gs op pos mp a@(GenericAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
+    | Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
+    | otherwise = Left $ UnmatchedType a b pos
+    where
+        ps1 = toConstraintMap cs1
+        ps2 = toConstraintMap cs2
+        psw = fromConstraintMap <$> sequence (Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2))
+operationTypes gs op pos mp a@(RigidAnnotation id1 cs1) b@(GenericAnnotation id2 cs2)
+    | Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
+    | otherwise = Left $ UnmatchedType a b pos
+    where
+        ps1 = toConstraintMap cs1
+        ps2 = toConstraintMap cs2
+        psw = fromConstraintMap <$> sequence (Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2))
+operationTypes gs op pos mp a@(RigidAnnotation id1 cs1) b@(RigidAnnotation id2 cs2)
+    | Map.keys ps1 == Map.keys ps2 = RigidAnnotation id2 <$> psw
+    | otherwise = Left $ UnmatchedType a b pos
+    where
+        ps1 = toConstraintMap cs1
+        ps2 = toConstraintMap cs2
+        psw = fromConstraintMap <$> sequence (Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2))
 operationTypes gs op pos mp a@(GenericAnnotation _ acs) b = 
     specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty a b *> Right b
 operationTypes gs op pos mp b a@(GenericAnnotation _ acs) = 
     specify pos emptyTwoSets (Annotations (Map.empty, Set.empty) Nothing) Map.empty Map.empty b a *> Right a
 operationTypes gs op pos mp ft@(OpenFunctionAnnotation anns1 ret1 forType impls) (OpenFunctionAnnotation anns2 ret2 _ _) =
-    (\xs -> OpenFunctionAnnotation (init xs) (last xs) forType impls) <$> zipWithM (operationTypes gs op pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2]) where 
+    (\xs -> OpenFunctionAnnotation (init xs) (last xs) forType impls) <$> zipWithM (operationTypes gs op pos mp) (anns1 ++ [ret1]) (anns2 ++ [ret2]) 
 operationTypes gs op pos mp a@(OpenFunctionAnnotation anns1 ret1 _ _) (FunctionAnnotation args ret2) = 
-    (\xs -> FunctionAnnotation (init xs) (last xs)) <$> zipWithM (operationTypes gs op pos mp) (anns1 ++ [ret1]) (args ++ [ret2]) where
+    (\xs -> FunctionAnnotation (init xs) (last xs)) <$> zipWithM (operationTypes gs op pos mp) (anns1 ++ [ret1]) (args ++ [ret2])
 operationTypes _ _ pos _ a b = Left $ UnmatchedType a b pos
 
 sameTypesVariant pos usts a b = any isRight xs where

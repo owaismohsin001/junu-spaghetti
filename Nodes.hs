@@ -410,3 +410,13 @@ secondaryMember k (TwoSets _ set) = Set.member k set
 
 secondaryIsNull :: TwoSets a -> Bool
 secondaryIsNull (TwoSets _ set) = Set.null set
+
+type ConstraintMap = Map.Map Lhs Annotation
+
+toConstraintMap :: [Constraint] -> ConstraintMap
+toConstraintMap [] = Map.empty
+toConstraintMap ((ConstraintHas k (AnnotationConstraint ann)):xs) = Map.singleton k ann `Map.union` toConstraintMap xs
+toConstraintMap (x:_) = error $ "That's ain't how this works with " ++ show x ++ " buddy"
+
+fromConstraintMap :: ConstraintMap -> [Constraint]
+fromConstraintMap mp = Map.elems $ Map.mapWithKey (\k ann -> ConstraintHas k $ AnnotationConstraint ann) mp
