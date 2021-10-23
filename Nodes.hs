@@ -189,6 +189,7 @@ data ErrorType =
     | UnsearchableType Lhs Annotation P.SourcePos
     | NoEstablishedRelationWith Annotation P.SourcePos 
     | UnmatchablePredicates Annotation P.SourcePos 
+    | ImpossibleOperation Annotation Operation Annotation P.SourcePos
     | UnificationError Generic ErrorType
     | UnInferrableType (Maybe ErrorType) P.SourcePos
     | UnCallableType Annotation P.SourcePos
@@ -223,6 +224,7 @@ instance Show ErrorType where
     show (UnsearchableType lhs ann pos) = "Can't search for field " ++ show lhs ++ " in " ++ show ann ++ "\n" ++ showPos pos
     show (UnmatchedConstraint a b pos) = "Can't match expected constraint " ++ show a ++ " with the given constraint " ++ show b ++ "\n" ++ showPos pos
     show (UnmatchablePredicates ann pos) = "No set matching predicate notis " ++ show ann ++ "\n" ++ showPos pos
+    show (ImpossibleOperation ann1 op ann2 pos) = "Can't perform operation " ++ show op ++ " with " ++ show ann1 ++ " on " ++ show ann2 ++ "\n" ++ showPos pos
     show (NoEstablishedRelationWith r pos) = "No relation on " ++ show r ++ " has been established\n" ++ showPos pos
     show (CallError fargs args pos) = "Expected " ++ show fargs ++ " arguments but got " ++ show args ++ " args"
     show (UnificationError g err) = "Impossible unification in " ++  show g ++ " because of the error: " ++ show err

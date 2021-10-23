@@ -1517,7 +1517,7 @@ operationTypes gs op pos mp a@(StructAnnotation ps1) b@(StructAnnotation ps2)
         seq = sequence ls
         ls = Map.unionWith (\(Right a) (Right b) -> operationTypes gs op pos mp a b) (Map.map Right ps1) (Map.map Right ps2)
 operationTypes gs op@Intersection pos mp a@(TypeUnion as) b@(TypeUnion bs) = case xs of
-    [] -> Left $ UnmatchablePredicates a pos 
+    [] -> Left $ ImpossibleOperation a Intersection b pos 
     [a] -> Right a
     xs -> Right . foldr1 (mergedTypeConcrete pos mp) $ Set.fromList xs
     where
@@ -1532,7 +1532,7 @@ operationTypes gs op@Intersection pos mp a@(TypeUnion as) b@(TypeUnion bs) = cas
             Right x -> Just x
             Left err -> has x ys
 operationTypes gs Difference pos mp a@(TypeUnion as) b@(TypeUnion bs) = case xs of
-    [] -> Left $ UnmatchablePredicates a pos 
+    [] -> Left $ ImpossibleOperation a Difference b pos 
     [a] -> Right a
     xs -> Right . foldr1 (mergedTypeConcrete pos mp) $ Set.fromList xs
     where
@@ -1541,7 +1541,7 @@ operationTypes gs Difference pos mp a@(TypeUnion as) b@(TypeUnion bs) = case xs 
         xs = nonMutuals (Set.toList as) (Set.toList bs)
 
         sameTypesVariantValued pos mp b x = 
-            if sameTypesVariant pos mp b x then Right x else Left $ UnmatchablePredicates b pos
+            if sameTypesVariant pos mp b x then Right x else Left $ ImpossibleOperation a Difference b pos 
 
         has1 :: Annotation -> [Annotation] -> Maybe Annotation
         has1 x [] = Nothing
@@ -1560,11 +1560,11 @@ operationTypes gs Difference pos mp a@(TypeUnion st) b =
         ms = map (\x -> (if similarStructure b x then operationTypes gs Difference pos mp b x else sameTypesVariantValued pos mp b x, x)) unions
         unions' = fromRight (error "This should never happen") . mapM fst $ filter (isRight . fst) ms
         xs = Set.fromList $ unions' ++ simples in
-        if Set.null xs then Left $ UnmatchablePredicates a pos
+        if Set.null xs then Left $ ImpossibleOperation a Difference b pos
         else Right $ foldr1 (mergedTypeConcrete pos mp) xs
     where
         sameTypesVariantValued pos mp b x = 
-            if sameTypesVariant pos mp b x then Left $ UnmatchablePredicates b pos else Right x
+            if sameTypesVariant pos mp b x then Left $ ImpossibleOperation a Difference b pos else Right x
         pred (b, v) = (isUnionDeep v && b) || not b
 
         similarStructure (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
@@ -1572,7 +1572,7 @@ operationTypes gs Difference pos mp a@(TypeUnion st) b =
         similarStructure _ _ = False
 operationTypes gs op@Intersection pos mp a@(TypeUnion st) b =
     case sequence . filter isRight . map (operationTypes gs op pos mp b) $ Set.toList st of
-        Right [] -> Left $ UnmatchablePredicates a pos
+        Right [] -> Left $ ImpossibleOperation a Intersection b pos
         Right [a] -> Right a
         Right xs -> Right . foldr1 (mergedTypeConcrete pos mp) $ Set.fromList xs
         Left err -> Left err
