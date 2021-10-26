@@ -933,8 +933,16 @@ evaluateTExpr pos usts (NegateTypeDeduction tExpr) = do
     typ <- get 
     evaluateTExpr pos usts $ negateDeduction tExpr
 
+mapTypeDeduction :: (Annotation -> Annotation) -> TypeDeductionExpr -> TypeDeductionExpr
+mapTypeDeduction f (NegateTypeDeduction tExpr) = NegateTypeDeduction $ mapTypeDeduction f tExpr
+mapTypeDeduction f (IsType lhs ann) = IsType lhs $ f ann
+mapTypeDeduction f (NotIsType lhs ann) = NotIsType lhs $ f ann
+
 evaluateTExprTotal :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> Annotation -> Either ErrorType Annotation
-evaluateTExprTotal pos usts tExpr typLhs = res $> st where (res, st) = runState (evaluateTExpr pos usts tExpr) typLhs
+evaluateTExprTotal pos usts tExpr typLhs = res $> st 
+    where 
+        (res, st) = runState (evaluateTExpr pos usts tExpr') typLhs
+        tExpr' = mapTypeDeduction (simplify pos usts) tExpr
 
 getAnnotationsState :: AnnotationState (Annotations (Finalizeable Annotation)) (Annotations Annotation)
 getAnnotationsState = do
@@ -1236,26 +1244,40 @@ unionFrom a b x =
 mergedTypeConcrete = mergedType (True, False, False, Map.empty) comparisionEither
 mergedTypeConcreteEither pos mp a b = Right $ mergedTypeConcrete pos mp a b
 
-mergedType :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
-mergedType gs crt pos mp a b = simplify $ go gs crt pos mp a b where
+simplifyConstraint :: P.SourcePos -> UserDefinedTypes -> Constraint -> Constraint
+simplifyConstraint pos usts (AnnotationConstraint ann) = AnnotationConstraint $ simplify pos usts ann
+simplifyConstraint pos usts (ConstraintHas lhs cn) = ConstraintHas lhs $ simplifyConstraint pos usts cn
 
-    simplify :: Annotation -> Annotation
-    simplify (TypeUnion ts) = case map (foldr1 (mergedType gs crt pos mp)) . groupBy2 $ Set.toList ts of
-        [] -> error "This should not be possible, simplification should return at least one value. Please report." 
-        [a] -> a
-        xs -> TypeUnion $ Set.fromList xs
-        where
-        groupBy2 :: [Annotation] -> [[Annotation]]
-        groupBy2 = go [] where
-            go acc [] = acc
-            go acc (h:t) =
-                let (hs, nohs) = partition (groupable h) t
-                in go ((h:hs):acc) nohs
-        groupable (NewTypeInstanceAnnotation id1 as) (NewTypeInstanceAnnotation id2 bs) = id1 == id2
-        groupable (FunctionAnnotation anns1 ret1) (FunctionAnnotation anns2 ret2) = length anns1 == length anns2
-        groupable (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
-        groupable a b = sameTypesBool pos mp a b
-    simplify a = a
+simplify :: P.SourcePos -> UserDefinedTypes -> Annotation -> Annotation
+simplify _ _ ann@Annotation{} = ann
+simplify _ _ ann@AnnotationLiteral{} = ann
+simplify pos usts (FunctionAnnotation anns ret) = FunctionAnnotation (map (simplify pos usts) anns) (simplify pos usts ret)
+simplify pos usts (OpenFunctionAnnotation anns ret ftr impls) = OpenFunctionAnnotation (map (simplify pos usts) anns) (simplify pos usts ret) (simplify pos usts ftr) (map (simplify pos usts) impls)
+simplify pos usts (NewTypeAnnotation id anns annMap) = NewTypeAnnotation id (map (simplify pos usts) anns) (Map.map (simplify pos usts) annMap)
+simplify pos usts (NewTypeInstanceAnnotation id anns) = NewTypeInstanceAnnotation id $ map (simplify pos usts) anns
+simplify pos usts (StructAnnotation mp) = StructAnnotation $ Map.map (simplify pos usts) mp
+simplify pos usts (GenericAnnotation id cns) = GenericAnnotation id $ map (simplifyConstraint pos usts) cns
+simplify pos usts (RigidAnnotation id cns) = RigidAnnotation id $ map (simplifyConstraint pos usts) cns
+simplify pos usts (TypeUnion ts) = case map (foldr1 (mergedTypeConcrete pos usts)) . groupBy2 $ Set.toList ts of
+    [] -> error "This should not be possible, simplification should return at least one value. Please report." 
+    [a] -> a
+    xs -> TypeUnion $ Set.fromList xs
+    where
+    groupBy2 :: [Annotation] -> [[Annotation]]
+    groupBy2 = go [] where
+        go acc [] = acc
+        go acc (h:t) =
+            let (hs, nohs) = partition (groupable h) t
+            in go ((h:hs):acc) nohs
+    groupable (NewTypeInstanceAnnotation id1 as) (NewTypeInstanceAnnotation id2 bs) = id1 == id2
+    groupable (FunctionAnnotation anns1 ret1) (FunctionAnnotation anns2 ret2) = length anns1 == length anns2
+    groupable (StructAnnotation mp1) (StructAnnotation mp2) = Map.keys mp1 == Map.keys mp2
+    groupable a b = sameTypesBool pos usts a b
+
+mergedType :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
+mergedType gs crt pos mp a b = simplifyUnions $ go gs crt pos mp a b where
+    simplifyUnions t@(TypeUnion a) = simplify pos mp t
+    simplifyUnions t = t
 
     go :: (Bool, Bool, Bool, Map.Map String [Constraint]) -> ComparisionReturns ErrorType Annotation -> SourcePos -> UserDefinedTypes -> Annotation -> Annotation -> Annotation
     go _ crt pos _ a@AnnotationLiteral{} b@AnnotationLiteral{} = 
