@@ -271,25 +271,32 @@ instance Show Node where
     show (CreateNewType lhs args _) = show lhs ++ "(" ++ intercalate ", " (map show args) ++ ")"
     show (TypeDeductionNode lhs t pos) = show lhs ++ " => " ++ show t ++ "\n" ++ show pos
 
-data TypeDeductionExpr =
-    IsType Lhs Annotation
-    | NotIsType Lhs Annotation
-    | NegateTypeDeduction TypeDeductionExpr
+data PredicateExprLang a =
+    IsType Lhs a
+    | NotIsType Lhs a
+    | NegateTypeDeduction (PredicateExprLang a)
     deriving(Show, Ord, Eq)
 
-negateDeduction :: TypeDeductionExpr -> TypeDeductionExpr
-negateDeduction (IsType lhs ann) = NotIsType lhs ann
-negateDeduction (NotIsType lhs ann) = IsType lhs ann
-negateDeduction (NegateTypeDeduction typ) = NegateTypeDeduction $ negateDeduction typ
+negatePredicateExpr :: PredicateExprLang a -> PredicateExprLang a
+negatePredicateExpr (IsType lhs ann) = NotIsType lhs ann
+negatePredicateExpr (NotIsType lhs ann) = IsType lhs ann
+negatePredicateExpr (NegateTypeDeduction typ) = NegateTypeDeduction $ negatePredicateExpr typ
+
+getFirstDeductionLhs :: PredicateExprLang a -> Lhs
+getFirstDeductionLhs (IsType lhs _) = lhs
+getFirstDeductionLhs (NotIsType lhs _) = lhs
+getFirstDeductionLhs (NegateTypeDeduction typ) = getFirstDeductionLhs typ
+
+instance Functor PredicateExprLang where
+    fmap f (NegateTypeDeduction tExpr) = NegateTypeDeduction $ fmap f tExpr
+    fmap f (IsType lhs ann) = IsType lhs $ f ann
+    fmap f (NotIsType lhs ann) = NotIsType lhs $ f ann
+
+type TypeDeductionExpr = PredicateExprLang Annotation
 
 deductionNodesToDeductions :: Node -> TypeDeductionExpr
 deductionNodesToDeductions (TypeDeductionNode lhs a pos) = a
 deductionNodesToDeductions a = error $ "Can't remove types from " ++ show a
-
-getFirstDeductionLhs :: TypeDeductionExpr -> Lhs
-getFirstDeductionLhs (IsType lhs _) = lhs
-getFirstDeductionLhs (NotIsType lhs _) = lhs
-getFirstDeductionLhs (NegateTypeDeduction typ) = getFirstDeductionLhs typ
 
 data NodeNoPos =
     DeclNNoPos Decl

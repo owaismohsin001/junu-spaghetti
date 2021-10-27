@@ -931,18 +931,13 @@ evaluateTExpr pos usts (NotIsType _ ann) = do
         Left err -> return $ Left err
 evaluateTExpr pos usts (NegateTypeDeduction tExpr) = do
     typ <- get 
-    evaluateTExpr pos usts $ negateDeduction tExpr
-
-mapTypeDeduction :: (Annotation -> Annotation) -> TypeDeductionExpr -> TypeDeductionExpr
-mapTypeDeduction f (NegateTypeDeduction tExpr) = NegateTypeDeduction $ mapTypeDeduction f tExpr
-mapTypeDeduction f (IsType lhs ann) = IsType lhs $ f ann
-mapTypeDeduction f (NotIsType lhs ann) = NotIsType lhs $ f ann
+    evaluateTExpr pos usts $ negatePredicateExpr tExpr
 
 evaluateTExprTotal :: P.SourcePos -> UserDefinedTypes -> TypeDeductionExpr -> Annotation -> Either ErrorType Annotation
 evaluateTExprTotal pos usts tExpr typLhs = res $> st 
     where 
         (res, st) = runState (evaluateTExpr pos usts tExpr') typLhs
-        tExpr' = mapTypeDeduction (simplify pos usts) tExpr
+        tExpr' = simplify pos usts <$> tExpr
 
 getAnnotationsState :: AnnotationState (Annotations (Finalizeable Annotation)) (Annotations Annotation)
 getAnnotationsState = do
@@ -1054,7 +1049,7 @@ getAssumptionType (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
             case es of
                 [] -> return ann
                 _ -> do
-                    case evaluateTExprTotal pos mp (negateDeduction tExpr) =<< typLhs of
+                    case evaluateTExprTotal pos mp (negatePredicateExpr tExpr) =<< typLhs of
                         Right remAnn -> insertAnnotation lhs $ Finalizeable False remAnn
                         Left _ -> return ann
             e <- sequence <$> mapM getAssumptionType es
@@ -1822,7 +1817,7 @@ consistentTypesPass p (IfStmnt (TypeDeductionNode lhs tExpr _) ts es pos) = do
                     case es of
                         [] -> popScope $> (ts' *> Right (AnnotationLiteral "_"))
                         _ -> 
-                            case evaluateTExprTotal pos usts (negateDeduction tExpr) t of
+                            case evaluateTExprTotal pos usts (negatePredicateExpr tExpr) t of
                                 Right ann' -> do
                                     insertAnnotation lhs $ Finalizeable False ann'
                                     mapM_ getAssumptionType es
