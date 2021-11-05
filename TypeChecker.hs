@@ -1992,6 +1992,7 @@ allExists mp = mapM_ (exists mp) mp where
         Nothing -> Left $ NoTypeFound id pos
     exists mp (Annotation id, pos) = 
         case Map.lookup (LhsIdentifer id pos) mp of
+            Just (nt@NewTypeAnnotation{}, _) -> Left $ UnExpectedInstantiationType id pos
             Just _ -> Right ()
             Nothing -> Left $ NoTypeFound id pos
     exists mp (AnnotationLiteral lit, pos) = Right ()
@@ -2002,6 +2003,7 @@ allExists mp = mapM_ (exists mp) mp where
     exists mp (GenericAnnotation _ cns, pos) = mapM_ (constraintExists mp . (, pos)) cns where 
         constraintExists mp (ConstraintHas _ cn, pos) = constraintExists mp (cn, pos)
         constraintExists mp (AnnotationConstraint ann, pos) = exists mp (ann, pos)
+    exists mp _ = Right ()
 
 newTypeName :: P.SourcePos -> DefineTypesState Annotation Lhs
 newTypeName pos = do

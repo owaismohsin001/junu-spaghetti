@@ -204,8 +204,10 @@ data ErrorType =
     | CallError [Annotation] [Annotation] P.SourcePos
     | UnequalArguments [Annotation] [Annotation] P.SourcePos
     | NoTypeFound String P.SourcePos
+    | UnExpectedInstantiationType String P.SourcePos
 
 instance Show ErrorType where
+    show (UnExpectedInstantiationType id pos) = "Did not expect " ++ id ++ " to be instantiable" ++ "\n" ++ showPos pos
     show (InDefinitiveReturn Nothing pos) = "Function does not return\n" ++ showPos pos
     show (InDefinitiveReturn (Just id) pos) = "Function " ++ id ++ " does not return\n" ++ showPos pos
     show (UnmatchedType a b pos) = "Can't match expected type " ++ show a ++ " with given type " ++ show b ++ "\n" ++ showPos pos
