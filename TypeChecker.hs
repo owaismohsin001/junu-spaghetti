@@ -1987,12 +1987,12 @@ allExists mp = mapM_ (exists mp) mp where
     exists :: Map.Map Lhs (Annotation, P.SourcePos) -> (Annotation, P.SourcePos) -> Either ErrorType ()
     exists mp (NewTypeAnnotation{}, pos) = Right ()
     exists mp (NewTypeInstanceAnnotation id anns1, pos) = case Map.lookup (LhsIdentifer id pos) mp of
-        Just (NewTypeAnnotation id anns2 _, pos) -> if length anns1 == length anns2 then Right () else Left $ UnequalArguments anns1 anns2 pos
+        Just (NewTypeAnnotation id anns2 _, pos) -> if length anns1 <= length anns2 then Right () else Left $ UnequalArguments anns1 anns2 pos
         Just a -> Left $ UninstantiableType (fst a) pos
         Nothing -> Left $ NoTypeFound id pos
     exists mp (Annotation id, pos) = 
         case Map.lookup (LhsIdentifer id pos) mp of
-            Just (nt@NewTypeAnnotation{}, _) -> Left $ UnExpectedInstantiationType id pos
+            Just (NewTypeAnnotation{}, _) -> Left $ UnExpectedInstantiationType id pos
             Just _ -> Right ()
             Nothing -> Left $ NoTypeFound id pos
     exists mp (AnnotationLiteral lit, pos) = Right ()
