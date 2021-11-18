@@ -14,7 +14,64 @@ import Data.Char
 import Data.Either
 import TypeChecker
 import Data.Maybe
+import Control.Monad.State
 import System.Process
+
+safeName = ("v"++)
+
+processIdentifier :: ([Char] -> t -> a) -> Set.Set String -> String -> t -> State (Map.Map String Int, Int) a
+processIdentifier f nds id pos     
+    | id `Set.member` nds = return $ f id pos 
+    | otherwise = do
+        (appliedTo, n) <- get
+        case id `Map.lookup` appliedTo of
+            Just i -> return $ f (safeName $ show i) pos
+            Nothing -> do
+                modify (\(a, b) -> (Map.insert id (b+1) a, b+1))
+                (_, n) <- get
+                return $ f (safeName $ show n) pos
+
+changeNamesLhs :: Set.Set String -> Lhs -> State (Map.Map String Int, Int) Lhs
+changeNamesLhs nds fid@(LhsIdentifer id pos) = processIdentifier LhsIdentifer nds id pos 
+changeNamesLhs nds access@LhsAccess{} = revampLhsId nds access
+
+revampLhsId nds (LhsAccess id@Identifier{} lhs pos) = LhsAccess <$> changeNames nds id <*> return lhs <*> return pos
+revampLhsId nds (LhsAccess x lhs pos) = LhsAccess <$> revampId nds x <*> return lhs <*> return pos
+revampLhsId _ n = error $ "Only call revampLhsId with " ++ show n
+
+changeNamesDecl :: Set.Set String -> Decl -> State (Map.Map String Int, Int) Decl 
+changeNamesDecl nds (Decl lhs rhs ann pos) = Decl <$> changeNamesLhs nds lhs <*> changeNames nds rhs <*> return ann <*> return pos
+changeNamesDecl nds (Assign lhs rhs pos) = Assign <$> changeNamesLhs nds lhs <*> changeNames nds rhs <*> return pos
+changeNamesDecl nds (FunctionDecl lhs ann pos) = FunctionDecl <$> changeNamesLhs nds lhs <*> return ann <*> return pos
+changeNamesDecl nds (StructDef lhs ann pos) = StructDef <$> changeNamesLhs nds lhs <*> return ann <*> return pos
+changeNamesDecl nds (OpenFunctionDecl lhs ann pos) = OpenFunctionDecl <$> changeNamesLhs nds lhs <*> return ann <*> return pos
+changeNamesDecl nds (ImplOpenFunction lhs args ann ds ftr pos) = 
+    ImplOpenFunction <$> changeNamesLhs nds lhs <*> mapM (\(lhs, ann) -> (, ann) <$> changeNamesLhs nds lhs) args <*> return ann <*> mapM (changeNames nds) ds <*> return ftr <*> return pos
+changeNamesDecl nds (NewTypeDecl lhs ann pos) = NewTypeDecl <$> changeNamesLhs nds lhs <*> return ann <*> return pos
+changeNamesDecl nds (Expr e) = Expr <$> changeNames nds e
+
+changeNames :: Set.Set String -> Node -> State (Map.Map String Int, Int) Node
+changeNames nds (Identifier id pos) = processIdentifier Identifier nds id pos 
+changeNames nds (FunctionDef args ret ns pos) = 
+    FunctionDef <$> mapM (\(lhs, ann) -> (, ann) <$> changeNamesLhs nds lhs) args <*> return ret <*> mapM (changeNames nds) ns <*> return pos
+changeNames nds (Return n pos) = flip Return pos <$> changeNames nds n
+changeNames nds (Call n as pos) = Call <$> changeNames nds n <*> mapM (changeNames nds) as <*> return pos
+changeNames nds access@Access{} = revampId nds access
+changeNames nds (IfStmnt c ts es pos) = IfStmnt <$> changeNames nds c <*> mapM (changeNames nds) ts <*> mapM (changeNames nds) es <*> return pos
+changeNames nds (IfExpr c t e pos) = IfExpr <$> changeNames nds c <*> changeNames nds t <*> changeNames nds e <*> return pos
+changeNames nds (CreateNewType lhs as pos) = flip (CreateNewType lhs) pos <$> mapM (changeNames nds) as
+changeNames nds (TypeDeductionNode lhs tExpr pos) = TypeDeductionNode <$> changeNamesLhs nds lhs <*> changeNamesTExpr nds tExpr <*> return pos
+changeNames nds (Lit lit) = return $ Lit lit
+changeNames nds (DeclN decl) = DeclN <$> changeNamesDecl nds decl
+changeNames nds (StructN (Struct map pos)) = StructN <$> (Struct <$> mapM (changeNames nds) map <*> return pos)
+
+changeNamesTExpr nds (NegateTypeDeduction tExpr) = NegateTypeDeduction <$> changeNamesTExpr nds tExpr
+changeNamesTExpr nds (IsType lhs ann) = flip IsType ann <$> changeNamesLhs nds lhs
+changeNamesTExpr nds (NotIsType lhs ann) = flip NotIsType ann <$> changeNamesLhs nds lhs
+
+revampId nds (Access id@Identifier{} lhs pos) = Access <$> changeNames nds id <*> return lhs <*> return pos
+revampId nds (Access x lhs pos) = Access <$> revampId nds x <*> return lhs <*> return pos
+revampId _ n = error $ "Only call revampId with " ++ show n
 
 generateLhsLua :: UserDefinedTypes -> Lhs -> String
 generateLhsLua _ (LhsIdentifer id _) = id
@@ -120,7 +177,9 @@ main = do
             printUsts usts *> print (f as)
             writeFile (replaceExtenstion fn "lua") $ "require 'runtime'\n\n" ++ intercalate "" (map (forwardDeclare Lua usts) nodes) ++ "\n\n" ++ intercalate "\n" (map (generate Lua usts) nodes)
             invoke Lua $ replaceExtenstion fn "lua"
-            where nodes = ms ++ ns
+            where 
+                nodes = ms ++ nxs
+                nxs = evalState (mapM (changeNames . Set.fromList . map show $ Map.keys baseMapping) ns) (Map.empty, 0)
         Left a -> putStrLn a
     where 
         p (LhsIdentifer k _) _
