@@ -324,11 +324,13 @@ substituteVariablesOptFilter pred pos defs anns rels mp usts n = evalState (go p
         . sequence
     go pred rels mp (StructAnnotation ms) = 
         (\ms' -> return $ StructAnnotation <$> ms') . sequence =<< mapM (go pred rels mp) ms
-    go pred rels mp (TypeUnion ts) = 
-        (\xs -> case (if pred then filter (\a -> not (isGeneric pos usts a) || (isGeneric pos usts a && annotationConsistsOf usts defs a)) else id) <$> xs of
-            Left err -> return $ Left err
-            Right [] -> return $ foldr1 (mergedTypeConcrete pos usts) <$> xs
-            Right xs -> return . Right $ foldr1 (mergedTypeConcrete pos usts) xs) . sequence =<< mapM (go pred rels mp) (Set.toList ts)
+    go pred rels mp (TypeUnion ts) = do
+        let f = if pred then filter (\a -> not (isGeneric pos usts a) || (isGeneric pos usts a && annotationConsistsOf usts defs a)) else id
+        xs <- mapM (go pred rels mp) (Set.toList ts)
+        let xs' = map (\(Right a) -> a) $ filter isRight xs
+        case xs' of
+            [] -> return $ foldr1 (mergedTypeConcrete pos usts) <$> sequence xs
+            xs -> return . Right $ foldr1 (mergedTypeConcrete pos usts) xs
     go pred rels mp OpenFunctionAnnotation{} = error "Can't use substituteVariables with open functions"
 
 constraintsConsistsOf :: UserDefinedTypes -> TwoSets Annotation -> Constraint -> Bool

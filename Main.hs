@@ -35,6 +35,7 @@ changeNamesLhs :: Set.Set String -> Lhs -> State (Map.Map String Int, Int) Lhs
 changeNamesLhs nds fid@(LhsIdentifer id pos) = processIdentifier LhsIdentifer nds id pos 
 changeNamesLhs nds access@LhsAccess{} = revampLhsId nds access
 
+revampLhsId :: Set.Set String -> Lhs -> State (Map.Map String Int, Int) Lhs
 revampLhsId nds (LhsAccess id@Identifier{} lhs pos) = LhsAccess <$> changeNames nds id <*> return lhs <*> return pos
 revampLhsId nds (LhsAccess x lhs pos) = LhsAccess <$> revampId nds x <*> return lhs <*> return pos
 revampLhsId _ n = error $ "Only call revampLhsId with " ++ show n
@@ -65,10 +66,12 @@ changeNames nds (Lit lit) = return $ Lit lit
 changeNames nds (DeclN decl) = DeclN <$> changeNamesDecl nds decl
 changeNames nds (StructN (Struct map pos)) = StructN <$> (Struct <$> mapM (changeNames nds) map <*> return pos)
 
+changeNamesTExpr :: Set.Set String -> PredicateExprLang a -> State (Map.Map String Int, Int) (PredicateExprLang a)
 changeNamesTExpr nds (NegateTypeDeduction tExpr) = NegateTypeDeduction <$> changeNamesTExpr nds tExpr
 changeNamesTExpr nds (IsType lhs ann) = flip IsType ann <$> changeNamesLhs nds lhs
 changeNamesTExpr nds (NotIsType lhs ann) = flip NotIsType ann <$> changeNamesLhs nds lhs
 
+revampId :: Set.Set String -> Node -> State (Map.Map String Int, Int) Node
 revampId nds (Access id@Identifier{} lhs pos) = Access <$> changeNames nds id <*> return lhs <*> return pos
 revampId nds (Access x lhs pos) = Access <$> revampId nds x <*> return lhs <*> return pos
 revampId _ n = error $ "Only call revampId with " ++ show n
