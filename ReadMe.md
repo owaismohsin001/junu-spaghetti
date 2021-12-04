@@ -11,40 +11,40 @@ let s = "Hello"
 You may have noticed the lack of type annotations, this is because Junu generally has local inference and therefore can infer the type of most local declarations. These are typed exactly the way you would expect them to be typed. Here are the results of typing
 ```
 b: Bool
-n: Int
+n: Num
 s: String
 ```
 ## Functions
 Functions in Junu are first-class(and closures are also supported) meaning they can be passed to other functions, assigned to variables returned from functions. Following is an example of a function in Junu.
 ```
-addNums(a: Int, b: Int) => Int {
+addNums(a: Num, b: Num) => Num {
     return a+b
 }
 ```
 and it's typed as 
 ```
-addNums: (Int, Int) -> Int
+addNums: (Num, Num) -> Num
 ```
 Now, Junu can infer the return type of functions that don't recurse, either by themselves or through mutual recursion, which this function does not so let's omit the return type and see if it works.
 ```
-let addNums = (a: Int, b: Int) => {
+let addNums = (a: Num, b: Num) => {
     return a+b
 }
 ```
 As you might have noticed, we are using anonymous class functions here which is a common way of asking for type inference on return types in Junu. You may also consider omitting the curly braces if your function consists only of a single expression like the function discussed above.
 ```
-let addNums = (a: Int, b: Int) => a+b
+let addNums = (a: Num, b: Num) => a+b
 ``` 
 You may also want to forward declare functions if you plan to call them, in other functions before defining them. This is usually only used when mutual recursion comes into play, but our example here is not that.
 ```
-f(Int) => Int
-let g = (i: Int) => f(i)
-f = (i: Int) => i+1
+f(Num) => Num
+let g = (i: Num) => f(i)
+f = (i: Num) => i+1
 ```
 This will be typed as
 ```
-f: (Int) -> Int
-g: (Int) -> Int
+f: (Num) -> Num
+g: (Num) -> Num
 ```
 
 ## Structural Types
@@ -54,14 +54,14 @@ let obj = {a: 1, b: 3, c: "Hello"}
 ```
 This will be typed as
 ```
-obj: {a: Int, b: Int, c: String}
+obj: {a: Num, b: Num, c: String}
 ```
 and any object even if aliased can be assigned to this variable
 
 ## Type Unions
 Type Unions are a form of subtyping which prefers composition over inheritance and is the heart and soul of this programming language. Unions here can be explicitly annotated, like this
 ```
-let x: Int | String = 1
+let x: Num | String = 1
 x = "Hello"
 ```
 or inferred like such
@@ -71,15 +71,15 @@ x = "Hello"
 ```
 both of which will be typed as 
 ```
-x: (Int | String)
+x: (Num | String)
 ```
 You must note that a union can only be passed to a function that is either polymorphic over them or expects the exact the unions that are sent to it, this is done to preserve the soundness of the type system. 
 
 ## Narrowing Unions
-Given a type, `Int | String`, there are ways to operate on it that can give you a singular type, and the main approach of doing that is using if statements, like such
+Given a type, `Num | String`, there are ways to operate on it that can give you a singular type, and the main approach of doing that is using if statements, like such
 ```
-let f = (a: Int | String) => {
-    if a is Int {
+let f = (a: Num | String) => {
+    if a is Num {
         println(a+2)
     } else {
         println("Hello " + a)
@@ -87,10 +87,10 @@ let f = (a: Int | String) => {
     return {}
 }
 ```
-This, when invoked with like this `f("World")`, prints `Hello World` but when invoked like this `f(3)` prints `5`. As you might have noticed other than narrowing the type of `a` to `Int` in the first block, it narrowed down the type of the `else` block to `String` as well. This functions just as well with early returns too, for instance, the function above can be re-written as
+This, when invoked with like this `f("World")`, prints `Hello World` but when invoked like this `f(3)` prints `5`. As you might have noticed other than narrowing the type of `a` to `Num` in the first block, it narrowed down the type of the `else` block to `String` as well. This functions just as well with early returns too, for instance, the function above can be re-written as
 ```
-let f = (a: Int | String) => {
-    if a is Int {
+let f = (a: Num | String) => {
+    if a is Num {
         println(a+2)
         return {}
     }
@@ -111,7 +111,7 @@ let pair = Pair(1, "Hello")
 ```
 which will be typed as
 ```
-pair: Pair(Int, String)
+pair: Pair(Num, String)
 ```
 and they can obviously be passed as generics and thus be nested
 ```
@@ -119,11 +119,11 @@ let pair = Pair(1, Pair({}, "Hello"))
 ```
 while being typed as
 ```
-pair: Pair(Int, Pair({}, String))
+pair: Pair(Num, Pair({}, String))
 ```
 For a recursive type, when you want to generalize over its length, you can simply specify all the type variables in order like `len` function below does.
 ```
-len(xs: Nil | Ls(n{})) => Int {
+len(xs: Nil | Ls(n{})) => Num {
     if xs is Nil { return 0 }
     return len(xs.res)+1
 }
@@ -144,13 +144,13 @@ t = Tup(1, 1)
 their inner variables are turned into unions if that's a possiblility
 ```
 Tup = Tup(a{}, b{}) = fromList [(a,a{}),(b,b{})]
-t: Tup(Int, (Int | String))
+t: Tup(Num, (Num | String))
 ```
 
 ## Type Aliases
 Type aliasing is used to build recursive and mutually recursive structures, here's an example
 ```
-type Person = {name: String, age: Int, male: Bool, pet: Pet, parent: Nil | Person}
+type Person = {name: String, age: Num, male: Bool, pet: Pet, parent: Nil | Person}
 ```
 And objects of this kind can be interpreted as `Person` type.
 ```
@@ -158,7 +158,7 @@ let st = {name: "John", age: 10, male: true, pet: {species: "Cat", name: "Tom", 
 ```
 Although, its immediate inferred type will be
 ```
-st: {age: Int, male: Bool, name: String, parent: {}, pet: {color: String, name: String, species: String}}
+st: {age: Num, male: Bool, name: String, parent: {}, pet: {color: String, name: String, species: String}}
 ```
 but it can be sent to functions that accept `Person` type, like such
 ```
@@ -191,12 +191,12 @@ let s = identity("Hello")
 ```
 Since functions are first-class, they can be passed to `identity` as well, like this 
 ```
-let f = identity((p: Int) => p+1)
+let f = identity((p: Num) => p+1)
 ```
 All of which will be typed as 
 ```
-f: (Int) -> Int
-n: Int
+f: (Num) -> Num
+n: Num
 s: String
 ```
 Polymorphic functions can also constraint the values they are be willing to take, for example, we can define a function that can take `x`, if and only if `x` has a field called `name` of type `String`. What follows is an example,
@@ -212,7 +212,7 @@ It is important to note that this is not structural subtyping, since this functi
 ```
 let idName = (obj: x{.name: String}) => obj
 ```
-when invoked like such `let resB = idName({name: "John", age: 20})` would be typed as `{age: Int, name: String}`.
+when invoked like such `let resB = idName({name: "John", age: 20})` would be typed as `{age: Num, name: String}`.
 Note: Row polymorphism along is planned although it's not yet implemented.
 
 ## Arrays
@@ -228,7 +228,7 @@ if res notis Nil {
     let x = index(res, 3)
     if x is String {
         println(x + "hoo")
-    } else if x is Int {
+    } else if x is Num {
         println(x+1)
     } else {
         println(x)
@@ -247,19 +247,19 @@ impl setName(s: String, area: String, person: Person) => {
     return person.pet
 } for Person
 
-impl setName(i: Int, area: String, intkeeper: {pet: {name: Int}}) => {
+impl setName(i: Num, area: String, intkeeper: {pet: {name: Num}}) => {
     intkeeper.pet.name = i
     return intkeeper.pet
-} for {pet: {name: Int}}
+} for {pet: {name: Num}}
 ```
 
-Now, this open function can only be called with either `{pet: {name: Int}}` or `Person`. Now let's call them with available
+Now, this open function can only be called with either `{pet: {name: Num}}` or `Person`. Now let's call them with available
 ```
 setName("Junu", "Collatz", {pet: {name: 1}})
 ```
 It's also important to know that +, -, and other operators are actually overloadable because they are implemented as open functions but since user-defined operators are not yet part of the language, it only makes sense that these are to be implemented by using names, and that's why logical names are assigned to these. For instance `add`, `sub`, `neq`, and `eq` are names for `+`, `-`, `!=`, and `==` respectively. Here's an example of how you can implement add for your own type that represents a 2d point.
 ```
-type Point = {x: Int, y: Int}
+type Point = {x: Num, y: Num}
 
 impl add(a: Point, b: Point) => {
     return {x: a.x + b.x, y: a.y + b.y}
