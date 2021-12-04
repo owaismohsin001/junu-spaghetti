@@ -1,7 +1,7 @@
 type Pet = {species: String, name: String, color: String}
-type Moo = {name: String, age: Int, male: Bool, pet: Pet}
-type Person = {name: String, age: Int, male: Bool, pet: Pet, parent: Nil | Person}
-type Date = {month: Int, weekday: Int, year: Int}
+type Moo = {name: String, age: Num, male: Bool, pet: Pet}
+type Person = {name: String, age: Num, male: Bool, pet: Pet, parent: Nil | Person}
+type Date = {month: Num, weekday: Num, year: Num}
 newtype Tup(a{}, b{}) = (a, b)
 
 println("\n\n\nProgram begins: \n")
@@ -14,7 +14,7 @@ let b = s.b
 x = 4
 let i = 0
 
-let fl = (a: Int, b: Bool) => {
+let fl = (a: Num, b: Bool) => {
     return (n: Bool) => {
         return (h: Pet) => {
             return () => {
@@ -24,8 +24,8 @@ let fl = (a: Int, b: Bool) => {
     }
 }
 
-let go = (a: Int, b: Int) => {
-    let f = (n: Int) => {
+let go = (a: Num, b: Num) => {
+    let f = (n: Num) => {
         let zoo = n * 3
         return n
     }
@@ -33,14 +33,14 @@ let go = (a: Int, b: Int) => {
     return f(ans)
 }
 
-mutu1(Int, Int) => Int
-mutu2(Int, Bool) => Int
+mutu1(Num, Num) => Num
+mutu2(Num, Bool) => Num
 
-mutu1 = (a: Int, b: Int) => Int {
+mutu1 = (a: Num, b: Num) => Num {
     return mutu2(b, true)
 }
 
-mutu2 = (n: Int, a: Bool) => Int {
+mutu2 = (n: Num, a: Bool) => Num {
     if b { return 1 }
     return mutu1(n, n+1)
 }
@@ -50,7 +50,7 @@ let apply = (f: (a{}) -> b{}, x: a{}) => b{} {
 }
 
 let given = fl(1, true)(true)({name: "Hello's kitty", color: "Black", species: "Cat"})()
-let application = apply((a: Int) => { return a == 1 }, 1)
+let application = apply((a: Num) => { return a == 1 }, 1)
 
 let changeCatName = (person: Person, name: String) => {
     let f = () => {
@@ -69,7 +69,7 @@ let changeCatName = (person: Person, name: String) => {
     return f()
 }
 
-let modifyAge = (person: Person, age: Int) => {
+let modifyAge = (person: Person, age: Num) => {
     person.age = if age < 0 then 0 else age
     return age
 }
@@ -95,10 +95,10 @@ impl setName(s: String, area: String, cat: {pet: Person}) => {
     return cat.pet
 } for {pet: Person}
 
-impl setName(i: Int, area: String, intkeeper: {pet: {name: Int}}) => {
+impl setName(i: Num, area: String, intkeeper: {pet: {name: Num}}) => {
     intkeeper.pet.name = i
     return intkeeper.pet
-} for {pet: {name: Int}}
+} for {pet: {name: Num}}
 
 let sn = setName("Junu", "Collatz", {pet: st})
 
@@ -107,13 +107,13 @@ println(sn)
 
 open fi(a{}) => (a{}) -> a{} for a{}
 
-impl fi(i: Int) => {
-    return (i: Int) => {return i}
-} for Int
+impl fi(i: Num) => {
+    return (i: Num) => {return i}
+} for Num
 
 let fires = fi(1)
 
-let fn = (c: st{.n: t{}, .a: Int}, a: t{}) => {
+let fn = (c: st{.n: t{}, .a: Num}, a: t{}) => {
     c.n = a
     return c.n
 }
@@ -179,11 +179,11 @@ let flr = (x: Pet | Person) => {
     return ftr(x.species, x)
 }
 
-if x is Int {
+if x is Num {
     b = if x < 10 then ftr("Hello ", st) else false
 }
 
-let basicPerson = (name: String, age: Int, male: Bool) => Person {
+let basicPerson = (name: String, age: Num, male: Bool) => Person {
     return {name: name, age: age, male: male, pet: {species: "Cat", name: "Tom", color: "White"}, parent: {}}
 }
 

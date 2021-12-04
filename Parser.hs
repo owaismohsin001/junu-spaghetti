@@ -105,7 +105,7 @@ strBigId = identifierPrefixParser const upper (lower <|> upper <|> digit)
 
 bigAnnotationId = identifierPrefixParser (
     \case
-        "Int" -> const $ AnnotationLiteral "Int"
+        "Num" -> const $ AnnotationLiteral "Num"
         "Bool" -> const $ AnnotationLiteral "Bool"
         "String" -> const $ AnnotationLiteral "String"
         a -> const $ Annotation a

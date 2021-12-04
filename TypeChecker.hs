@@ -1177,7 +1177,7 @@ getAssumptionType (Access st p pos) = do
             Right (StructAnnotation ps) -> return $ toEither (FieldNotFound p (AnnotationLiteral $ show ps) pos) (Map.lookup p ps)
             Right a -> return . Left $ FieldNotFound p a pos
             Left err -> return $ Left err
-getAssumptionType (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Int"
+getAssumptionType (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Num"
 getAssumptionType (Lit (LitBool _ _)) = return . Right $ AnnotationLiteral "Bool"
 getAssumptionType (Lit (LitString _ _)) = return . Right $ AnnotationLiteral "String"
 getAssumptionType (Identifier x pos) = do
@@ -1205,26 +1205,26 @@ nonDecls _ = False
 sourcePos = SourcePos "core" (mkPos 0) (mkPos 0)
 
 baseMapping = Map.fromList $ map (second (Finalizeable True)) [
-    (LhsIdentifer "add" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
+    (LhsIdentifer "add" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Num", AnnotationLiteral "String"]),
     (LhsIdentifer "println" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
     (LhsIdentifer "duplicate" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (GenericAnnotation "a" [])),
     (LhsIdentifer "write" sourcePos, FunctionAnnotation [GenericAnnotation "a" []] (StructAnnotation Map.empty)),
     (LhsIdentifer "concat" sourcePos, FunctionAnnotation [TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [GenericAnnotation "a" []]]),TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [GenericAnnotation "b" []]])] (TypeUnion (Set.fromList [Annotation "Nil",NewTypeInstanceAnnotation "Array" [TypeUnion (Set.fromList [GenericAnnotation "a" [],GenericAnnotation "b" []])]]))),
-    (LhsIdentifer "index" sourcePos, FunctionAnnotation [NewTypeInstanceAnnotation "Array" [GenericAnnotation "a" []],AnnotationLiteral "Int"] (TypeUnion $ Set.fromList [Annotation "Nil", GenericAnnotation "a" []])),
-    (LhsIdentifer "sub" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "mod" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "mul" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "div" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Int"]),
-    (LhsIdentifer "gt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
-    (LhsIdentifer "gte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
-    (LhsIdentifer "lt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
-    (LhsIdentifer "lte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "String"]),
-    (LhsIdentifer "eq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
-    (LhsIdentifer "neq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Int", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
+    (LhsIdentifer "index" sourcePos, FunctionAnnotation [NewTypeInstanceAnnotation "Array" [GenericAnnotation "a" []],AnnotationLiteral "Num"] (TypeUnion $ Set.fromList [Annotation "Nil", GenericAnnotation "a" []])),
+    (LhsIdentifer "sub" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Num"]),
+    (LhsIdentifer "mod" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Num"]),
+    (LhsIdentifer "mul" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Num"]),
+    (LhsIdentifer "div" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (GenericAnnotation "a" []) (GenericAnnotation "a" []) [AnnotationLiteral "Num"]),
+    (LhsIdentifer "gt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Num", AnnotationLiteral "String"]),
+    (LhsIdentifer "gte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Num", AnnotationLiteral "String"]),
+    (LhsIdentifer "lt" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Num", AnnotationLiteral "String"]),
+    (LhsIdentifer "lte" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Num", AnnotationLiteral "String"]),
+    (LhsIdentifer "eq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Num", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
+    (LhsIdentifer "neq" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Num", AnnotationLiteral "Bool", AnnotationLiteral "String"]),
     (LhsIdentifer "anded" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Bool"]),
     (LhsIdentifer "ored" sourcePos, OpenFunctionAnnotation [GenericAnnotation "a" [], GenericAnnotation "a" []] (AnnotationLiteral "Bool") (GenericAnnotation "a" []) [AnnotationLiteral "Bool"]),
     (LhsIdentifer "not" sourcePos, FunctionAnnotation [AnnotationLiteral "Bool"] (AnnotationLiteral "Bool")),
-    (LhsIdentifer "neg" sourcePos, FunctionAnnotation [AnnotationLiteral "Int"] (AnnotationLiteral "Int"))
+    (LhsIdentifer "neg" sourcePos, FunctionAnnotation [AnnotationLiteral "Num"] (AnnotationLiteral "Num"))
     ]
 
 assumeProgram prog i = assumeProgramMapping prog i (Annotations (Map.empty, Set.empty) (Just $ Annotations (baseMapping, Set.empty) Nothing))
@@ -1962,7 +1962,7 @@ consistentTypesPass p (Call e args pos) =  (\case
                     Right ann -> return . Left $ UnCallableType ann pos
                     Left err -> return $ Left err) =<< getTypeStateFrom (getAssumptionType e) pos
 consistentTypesPass p (Identifier x pos) = getAnnotationState (LhsIdentifer x pos)
-consistentTypesPass p (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Int"
+consistentTypesPass p (Lit (LitInt _ _)) = return . Right $ AnnotationLiteral "Num"
 consistentTypesPass p (Lit (LitBool _ _)) = return . Right $ AnnotationLiteral "Bool"
 consistentTypesPass p (Lit (LitString _ _)) = return . Right $ AnnotationLiteral "String"
 consistentTypesPass p a = error $ show a

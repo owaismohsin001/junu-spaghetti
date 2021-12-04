@@ -1,7 +1,7 @@
 function Array(x1) return { _type = "Array", _args = {x1}, _value = x1} end
 
 function IsString(a) return type(a) == "string" end
-function IsInt(a) return type(a) == "number" end
+function IsNum(a) return type(a) == "number" end
 function IsBool(a) return type(a) == "boolean" end
 
 function Either(f1, f2)
@@ -104,7 +104,7 @@ function IsFunction(argNum)
 end
 
 function IsType(val, spec)
-    if spec == "Int" then return IsInt(val) end
+    if spec == "Num" then return IsNum(val) end
     if spec == "Bool" then return IsBool(val) end 
     if spec == "String" then return IsString(val) end
     if type(spec) == "function" then return spec(val) end
@@ -136,35 +136,47 @@ end
 
 eq = newOpenFunction()
 newOpenInstance(eq, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a==b end)
-newOpenInstance(eq, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a==b end)
+newOpenInstance(eq, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a==b end)
+
 neq = newOpenFunction()
 newOpenInstance(neq, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a~=b end)
-newOpenInstance(neq, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a~=b end)
+newOpenInstance(neq, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a~=b end)
+
 gt = newOpenFunction()
-newOpenInstance(gt, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a>b end)
+newOpenInstance(gt, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a>b end)
 newOpenInstance(gt, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a>b end)
+
 gte = newOpenFunction()
-newOpenInstance(gte, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a>=b end)
+newOpenInstance(gte, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a>=b end)
 newOpenInstance(gt, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a>=b end)
+
 lt = newOpenFunction()
-newOpenInstance(lt, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a<b end)
+newOpenInstance(lt, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a<b end)
 newOpenInstance(gt, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a<b end)
+
 lte = newOpenFunction()
-newOpenInstance(lte, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a<=b end)
+newOpenInstance(lte, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a<=b end)
 newOpenInstance(gt, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a<=b end)
+
 add = newOpenFunction()
-newOpenInstance(add, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a+b end)
+newOpenInstance(add, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a+b end)
 newOpenInstance(add, function(a, b) return IsType(a, IsString) and IsType(b, IsString) end, function(a, b) return a..b end)
+
 sub = newOpenFunction()
-newOpenInstance(sub, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a-b end)
+newOpenInstance(sub, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a-b end)
+
 mul = newOpenFunction()
-newOpenInstance(mul, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a*b end)
+newOpenInstance(mul, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a*b end)
+
 div = newOpenFunction()
-newOpenInstance(div, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return a/b end)
+newOpenInstance(div, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return a/b end)
+
 mod = newOpenFunction()
-newOpenInstance(mod, function(a, b) return IsType(a, IsInt) and IsType(b, IsInt) end, function(a, b) return math.mod(a, b) end)
+newOpenInstance(mod, function(a, b) return IsType(a, IsNum) and IsType(b, IsNum) end, function(a, b) return math.mod(a, b) end)
+
 anded = newOpenFunction()
 newOpenInstance(anded, function(a, b) return IsType(a, IsBool) and IsType(b, IsBool) end, function(a, b) return a and b end)
+
 ored = newOpenFunction()
 newOpenInstance(ored, function(a, b) return IsType(a, IsBool) and IsType(b, IsBool) end, function(a, b) return a or b end)
 
@@ -248,4 +260,4 @@ end
 
 -- print(IsType({a = "A", b = 3}, {constraintSpec = {a = IsString}}))
 -- print(IsFunction(3)(function(a, b, c) return 0 end))
--- print(IsType({_type = "Tup", a = "A", b = 3, _args = {"A", 3}}, {namedTypeSpec = {name = "Tup", args = {IsString, Choice({IsInt, IsBool})}}}))
+-- print(IsType({_type = "Tup", a = "A", b = 3, _args = {"A", 3}}, {namedTypeSpec = {name = "Tup", args = {IsString, Choice({IsNum, IsBool})}}}))
