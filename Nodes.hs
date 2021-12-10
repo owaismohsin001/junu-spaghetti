@@ -203,6 +203,7 @@ data ErrorType =
     | NoDefinitionFound Lhs P.SourcePos
     | CallError [Annotation] [Annotation] P.SourcePos
     | UnequalArguments [Annotation] [Annotation] P.SourcePos
+    | DuplicateTypes Lhs P.SourcePos
     | NoTypeFound String P.SourcePos
     | UnExpectedInstantiationType String P.SourcePos
 
@@ -232,6 +233,7 @@ instance Show ErrorType where
     show (UnificationError g err) = "Impossible unification in " ++  show g ++ " because of the error: " ++ show err
     show (IrreconcilableAnnotatatedType lhs ann val pos) = "In the definition of " ++ show lhs ++ " it wan not possible to reconcile annotated " ++ show ann ++ " with " ++ show val ++ "\n" ++ showPos pos
     show (InfiniteTypeError g ann pos) = "Cannot create infinite type " ++ show g ++ " in " ++ show g ++ " ~ " ++ show ann ++ "\n" ++ showPos pos 
+    show (DuplicateTypes lhs pos) = "Duplicate type " ++ show lhs ++ "\n" ++ showPos pos
     show (NoTypeFound annString pos) = "No type named " ++ annString ++ " found\n" ++ showPos pos
 
 toStructNoPos :: Struct -> StructNoPos

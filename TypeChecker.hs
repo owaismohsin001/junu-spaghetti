@@ -1979,10 +1979,24 @@ onlyTypeDecls _ = False
 typeNodes :: [Node] -> ([Node], [Node])
 typeNodes = partition onlyTypeDecls
 
-typeMap :: [Node] -> Map.Map Lhs (Annotation, P.SourcePos)
-typeMap xs = Map.fromList (map makeTup xs) where
+typeTuples :: [Node] -> [(Lhs, (Annotation, SourcePos))]
+typeTuples = map makeTup . filter onlyTypeDecls where
     makeTup (DeclN (StructDef lhs rhs pos)) = (lhs, (rhs, pos))
     makeTup (DeclN (NewTypeDecl lhs rhs pos)) = (lhs, (rhs, pos))
+    makeTup e = error $ show e
+
+typeMap :: [Node] -> Map.Map Lhs (Annotation, P.SourcePos)
+typeMap = Map.fromList . typeTuples
+
+noDuplicates :: [Lhs] -> Either ErrorType ()
+noDuplicates xs = mapM_ cases $ group $ sort strs where
+    posMap = Map.fromList $ map (\(LhsIdentifer id pos) -> (id, pos)) xs
+    strs = map (\(LhsIdentifer id _) -> id) xs
+    cases xs = 
+        let pos = fromMaybe (error "There should be a position corresponding to a string") (Map.lookup (head xs) posMap) 
+        in case xs of
+            x:_:_ -> Left $ DuplicateTypes (LhsIdentifer x pos) pos
+            _ -> Right ()
 
 allExists :: Map.Map Lhs (Annotation, P.SourcePos) -> Either ErrorType ()
 allExists mp = mapM_ (exists mp) mp where
@@ -2080,6 +2094,7 @@ predefinedTypeNodes = map DeclN [
 typeCheckedScope :: [Node] -> Either ErrorType ([Node], [Node], (UserDefinedTypes, Annotations Annotation))
 typeCheckedScope program = 
     do
+        noDuplicates . map fst . typeTuples $ filter onlyTypeDecls metProgram
         allExists typesPos
         case runState (mapM getAssumptionType earlyReturns) (AnnotationLiteral "_", ((0, assumeProgram (Program $ earlyReturnToElse lifted) 0 types), types)) of
             (res, (a, map@(_, usts))) -> case sequence_ res of
